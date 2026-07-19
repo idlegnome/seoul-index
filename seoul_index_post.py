@@ -506,7 +506,8 @@ Rules:
 - Choose 3 to 4 lines that form a coherent set. STRONGLY prefer building around one PAIR (a dead heat or a wide gap) — that is the joke.
 - House style is Harper's Index: let the arrangement carry the joke. NEVER add a line that explains or points out the juxtaposition, and never editorialise. Just the labelled numbers.
 - Do NOT worry about line order: when the lines share a unit (e.g. an all-₩ post) they are automatically sorted by value, largest first. A near-equal "dead heat" still lands because near-equal values end up next to each other. Just choose a coherent set.
-- Each line is a bare "Label: value". Do NOT repeat a shared verb or metric on every line — put it once in the opener. For spending posts (₩ amounts), pick an opener that carries the verb, e.g. "Spent last quarter in Seoul", so lines read "Coffee shops: ₩651.4bn", never "Spent at coffee shops: ...".
+- Each line is a bare "Label: value". Do NOT repeat a shared verb or metric on every line — put it once in the opener. For spending posts (₩ amounts), pick an opener that carries the verb, e.g. "Spent last quarter in Seoul", so lines read "Coffee shops: ₩651.4bn", never "Spent at coffee shops: ...". This matters for live "right now" lines too: the pool labels repeat the whole phrase ("Estimated crowd in Jamsil right now"), and a post that copies them four times reads like a form. Name the metric on ONE line and leave the others bare ("Estimated crowd in Jamsil", then "Hongdae", "Gangnam Station"), and let the opener carry the time frame.
+- Wording shared by EVERY line is trimmed automatically after you answer, so a label you leave repetitive will be cut back rather than posted as-is. Write the labels you want and do not pad them to match each other.
 - Some ₩ lines are per-VISIT averages (category "avgbill"), not quarterly totals. For those use an average-spend opener like "Average spend per visit in Seoul" (never the "Spent last quarter" one), and never mix avgbill lines with quarterly-total spending lines in one post.
 - For age-group crowd posts, write the age band as a numeral: "20-somethings" (never "Twentysomethings"). Opener e.g. "20-somethings in Seoul's crowds, right now"; lines are bare place names.
 - Do not mix unrelated live "right now" lines with quarterly spending lines in a way that breaks a single frame, unless the contrast itself is the point.
@@ -631,6 +632,113 @@ def _sortkey(value_en):
         return None
 
 
+# --- label de-duplication --------------------------------------------------
+
+# Words that must not be left stranded at the end of a trimmed English label.
+_EN_DANGLERS = {'in', 'at', 'on', 'of', 'for', 'to', 'per', 'the', 'a', 'an',
+                'from', 'by', 'with', 'and', 'who', 'that'}
+
+
+def _common_run(seqs, from_end):
+    """Length of the longest run of identical tokens shared by EVERY sequence,
+    counted from the start or the end. Never consumes a whole sequence, so every
+    label keeps at least one token."""
+    n = 0
+    while all(len(s) > n for s in seqs):
+        pos = -1 - n if from_end else n
+        if len({s[pos] for s in seqs}) != 1:
+            break
+        n += 1
+    return n
+
+
+def _opener_covers(tokens, opener):
+    """True if the opener already says all of `tokens`. When it does, repeating
+    them on the lines is pure redundancy and the run can go from the first line
+    too; when it doesn't, the run stays on the first line so the framing is
+    stated once rather than lost."""
+    if not tokens:
+        return False
+    have = set(re.sub(r'[^\w\s]', ' ', opener.lower()).split())
+    return all(re.sub(r'\W', '', t.lower()) in have for t in tokens)
+
+
+def dedupe_labels(labels, opener, korean=False):
+    """Trim wording that every label in a post repeats, so the card reads the way
+    a Harper's Index does: the metric is named once, and each later line carries
+    only what actually differs.
+
+        Estimated crowd in Jamsil right now     Estimated crowd in Jamsil
+        Estimated crowd in Hongdae right now -> In Hongdae
+        Estimated crowd at the Yeouido riverbank right now
+                                                At the Yeouido riverbank
+
+    Both the leading and the trailing shared run are dropped from every line but
+    the first. A run the OPENER already carries ("right now" under the opener
+    "Seoul, right now") is dropped from the first line as well, since the reader
+    has just read it. Nothing that appears nowhere else is ever discarded.
+
+    English is head-initial, so the metric leads and the time frame trails;
+    Korean is head-final, so the two swap. The rule is symmetric, so the same
+    code handles both: `korean` only suppresses re-capitalisation.
+
+    Returns the labels untouched whenever there is nothing safe to trim."""
+    if len(labels) < 3:
+        return labels
+    toks = [l.split() for l in labels]
+    shortest = min(len(t) for t in toks)
+    n_pre = _common_run(toks, from_end=False)
+    # Leave at least one token that belongs to the line itself.
+    n_suf = min(_common_run(toks, from_end=True), shortest - n_pre - 1)
+    n_suf = max(n_suf, 0)
+    # A trim that strands a preposition ("Coffee shops in") is worse than the
+    # repetition it removes, so drop that end rather than mangle the line.
+    if n_suf and not korean:
+        if any(t[-1 - n_suf].lower().strip(',') in _EN_DANGLERS for t in toks):
+            n_suf = 0
+    pre, suf = toks[0][:n_pre], (toks[0][len(toks[0]) - n_suf:] if n_suf else [])
+    first_drops_pre = _opener_covers(pre, opener)
+    first_drops_suf = _opener_covers(suf, opener)
+
+    out = []
+    for i, t in enumerate(toks):
+        cut_pre = n_pre if (i or first_drops_pre) else 0
+        cut_suf = n_suf if (i or first_drops_suf) else 0
+        rest = t[cut_pre:len(t) - cut_suf]
+        if not rest:                      # nothing left to say — keep the original
+            out = list(labels)
+            break
+        s = ' '.join(rest)
+        if cut_pre and not korean and s[:1].islower():
+            s = s[0].upper() + s[1:]
+        out.append(s)
+    # Runs the whole post shares are gone; the first line may still echo the
+    # opener on its own (nothing shared it, so nothing above caught it).
+    out[0] = _drop_opener_echo(out[0], opener, korean)
+    return out
+
+
+def _drop_opener_echo(label, opener, korean):
+    """Trim the framing off the one line that still carries it.
+
+    When the selector has already written the later lines bare, there is no run
+    shared by every line for dedupe_labels() to catch, and the first line keeps
+    its full pool label: "Estimated crowd in Myeongdong right now" under the
+    opener "Seoul, right now". Strip the longest run of framing words the opener
+    already says, from the end in English and the start in Korean. Refuses any
+    trim that would strand a preposition or empty the label."""
+    t = label.split()
+    n = 0
+    while n < len(t) - 1 and _opener_covers([t[-1 - n] if not korean else t[n]], opener):
+        n += 1
+    if not n:
+        return label
+    rest = t[:len(t) - n] if not korean else t[n:]
+    if not korean and rest[-1].lower().strip(',') in _EN_DANGLERS:
+        return label
+    return ' '.join(rest)
+
+
 def compose(sel, pool):
     by_id = {f['id']: f for f in pool}
     picks = [p for p in sel.get('picks', []) if p.get('id') in by_id]
@@ -659,6 +767,15 @@ def compose(sel, pool):
     opener_ko = clean_opener(sel.get('opener_ko'), '숫자로 보는 서울')
     opener_emoji = _valid_emoji(sel.get('opener_emoji'))
 
+    # Say the shared part once: the selector is asked for bare labels, but it
+    # often copies a pool label verbatim onto every line, so trim deterministically
+    # rather than trust the prompt.
+    for lang, ko in (('en', False), ('ko', True)):
+        opener = opener_en if lang == 'en' else opener_ko
+        trimmed = dedupe_labels([l[f'label_{lang}'] for l in lines], opener, korean=ko)
+        for l, t in zip(lines, trimmed):
+            l[f'label_{lang}'] = t
+
     # Source line credits every distinct source used. Seoul Open Data covers
     # everything except the KOSIS 'national' figures, which get their own credit.
     uses_seoul = any(c != 'national' for c in cats)
@@ -678,9 +795,11 @@ def compose(sel, pool):
         yr = f', {"/".join(years)}' if years else ''
         src_en += f' · Statistics Korea{yr}'
         src_ko += f' · 통계청{yr}'
-    if estimated:
-        src_en += ' · crowds KT-estimated'
-        src_ko += ' · 인구는 KT 추정'
+    # How the crowd figures are arrived at is a caveat on the numbers themselves,
+    # not a credit, so it rides on the card beside them rather than in the source
+    # reply. It carries no link, so nothing is lost by taking it off the reply.
+    note_en = 'Crowds are KT-estimated' if estimated else ''
+    note_ko = '인구는 KT 추정' if estimated else ''
 
     cat_list = [by_id[p['id']]['cat'] for p in picks]
     primary = max(set(cat_list), key=cat_list.count)
@@ -693,13 +812,16 @@ def compose(sel, pool):
     op_en = f'{opener_emoji} {opener_en}' if opener_emoji else opener_en
     op_ko = f'{opener_emoji} {opener_ko}' if opener_emoji else opener_ko
     en_body = op_en + ':\n' + '\n'.join(
-        _pl(l['emoji'], l['label_en'], l['value_en']) for l in lines) + '\n' + src_en
+        _pl(l['emoji'], l['label_en'], l['value_en']) for l in lines) + (
+        f'\n{note_en}' if note_en else '') + '\n' + src_en
     ko_body = op_ko + ':\n' + '\n'.join(
-        _pl(l['emoji'], l['label_ko'], l['value_ko']) for l in lines) + '\n' + src_ko
+        _pl(l['emoji'], l['label_ko'], l['value_ko']) for l in lines) + (
+        f'\n{note_ko}' if note_ko else '') + '\n' + src_ko
 
     return {
         'opener': {'emoji': opener_emoji, 'en': opener_en, 'ko': opener_ko},
         'lines': lines, 'src_en': src_en, 'src_ko': src_ko,
+        'note_en': note_en, 'note_ko': note_ko,
         'en_body': en_body, 'ko_body': ko_body,
         'used': used, 'cats': list(cats), 'primary': primary,
     }
@@ -732,19 +854,21 @@ def add_tags(tb, body):
 # --- card rendering --------------------------------------------------------
 
 def _card_payload(c, lang):
-    """Pull the card's opener + lines for one language out of compose()'s output."""
+    """Pull the card's opener, lines and footnote for one language out of
+    compose()'s output."""
     opener = {'emoji': c['opener']['emoji'], 'text': c['opener'][lang]}
     lines = [{'emoji': l['emoji'], 'label': l[f'label_{lang}'], 'value': l[f'value_{lang}']}
              for l in c['lines']]
-    return opener, lines
+    return opener, lines, c[f'note_{lang}']
 
 
 def render_pair(c, out_dir):
     """Render the EN and KO cards into out_dir. Returns ((path,size),(path,size))."""
-    en_op, en_lines = _card_payload(c, 'en')
-    ko_op, ko_lines = _card_payload(c, 'ko')
-    en = render_card(en_op, en_lines, Path(out_dir) / 'card_en.png')
-    ko = render_card(ko_op, ko_lines, Path(out_dir) / 'card_ko.png', korean=True)
+    en_op, en_lines, en_note = _card_payload(c, 'en')
+    ko_op, ko_lines, ko_note = _card_payload(c, 'ko')
+    en = render_card(en_op, en_lines, Path(out_dir) / 'card_en.png', footnote=en_note)
+    ko = render_card(ko_op, ko_lines, Path(out_dir) / 'card_ko.png', korean=True,
+                     footnote=ko_note)
     return en, ko
 
 

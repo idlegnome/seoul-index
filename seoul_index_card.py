@@ -9,18 +9,21 @@ Pillow crops the result to the content.
 
 Design is fixed by seoul_index_post.compose(): a bold header (## + optional
 opener emoji + title), then one row per line (optional emoji + label, a red
-dotted leader, a bold right-aligned value). Source + hashtags are NOT on the
-card — the poster keeps those as real, clickable text under the image.
+dotted leader, a bold right-aligned value), then an optional muted footnote for
+a caveat on the numbers ("Crowds are KT-estimated"). Source + hashtags are NOT
+on the card — the poster keeps those as real, clickable text under the image,
+which a rendered PNG cannot be.
 
 The card is rendered on a magenta sentinel background and cropped to content, so
 3-line, 4-line, and wrapped-long-label posts all come out tight with no guessed
 height. Corners are square on purpose: Bluesky rounds image corners itself.
 
 Public API:
-    render_card(opener, lines, out_path, korean=False) -> out_path
-        opener: {"emoji": "🧾" or "", "text": "Spent last quarter in Seoul"}
-        lines:  [{"emoji": "☕" or "", "label": "Coffee shops",
-                  "value": "₩651.4bn"}, ...]
+    render_card(opener, lines, out_path, korean=False, footnote="") -> out_path
+        opener:   {"emoji": "🧾" or "", "text": "Spent last quarter in Seoul"}
+        lines:    [{"emoji": "☕" or "", "label": "Coffee shops",
+                    "value": "₩651.4bn"}, ...]
+        footnote: "Crowds are KT-estimated" or "" for none
 
 Raises CardRenderError on any failure so the poster can fall back to plaintext.
 """
@@ -39,6 +42,9 @@ CREAM = '#f5f0e6'
 RED = '#d70000'
 INK = '#20242c'
 BULLET = '#b0a487'
+# Footnote ink: warm and quiet, but still 5.35:1 on the cream, so the caveat
+# stays legible at 13px. (BULLET is only 2.17:1 — decoration, never text.)
+MUTED = '#6b6152'
 
 # Menlo covers latin + digits + the ₩ sign; Apple SD Gothic Neo covers Hangul;
 # Apple Color Emoji is picked up automatically for emoji. Same stack both langs
@@ -66,10 +72,11 @@ def _row_html(line):
     )
 
 
-def _build_html(opener, lines):
+def _build_html(opener, lines, footnote=''):
     op_emoji = opener.get('emoji') or ''
     op_lead = f'{_esc(op_emoji)} ' if op_emoji else ''
     rows = ''.join(_row_html(l) for l in lines)
+    foot = f'<div class="fn">{_esc(footnote)}</div>' if footnote else ''
     return f"""<!doctype html><html><head><meta charset="utf-8"><style>
 html,body{{margin:0;background:#{SENTINEL}}}
 .card{{width:{CARD_WIDTH}px;box-sizing:border-box;background:{CREAM};color:{INK};
@@ -80,10 +87,12 @@ html,body{{margin:0;background:#{SENTINEL}}}
 .r .lab{{line-height:1}}
 .r .led{{flex:1;border-bottom:2px dotted {RED};margin:0 9px}}
 .r .val{{font-weight:700;line-height:1;white-space:nowrap}}
+.fn{{margin-top:20px;font-size:13px;line-height:1.4;color:{MUTED}}}
 </style></head><body>
 <div class="card">
 <div class="h"><span class="md">##</span> {op_lead}{_esc(opener['text'])}</div>
 {rows}
+{foot}
 </div></body></html>"""
 
 
@@ -129,11 +138,12 @@ def _shoot(doc, out_path):
     return out_path, size
 
 
-def render_card(opener, lines, out_path, korean=False):
-    """Render one index card (label→leader→value rows). Returns (path, (w, h))."""
+def render_card(opener, lines, out_path, korean=False, footnote=''):
+    """Render one index card (label→leader→value rows, optional footnote).
+    Returns (path, (w, h))."""
     if not lines:
         raise CardRenderError('no lines to render')
-    return _shoot(_build_html(opener, lines), out_path)
+    return _shoot(_build_html(opener, lines, footnote), out_path)
 
 
 # Source domains get bolded wherever they appear in prose body text.
