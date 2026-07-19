@@ -1,0 +1,12 @@
+{
+  "_comment": "Copy this file to seoul_index_config.json and fill in your own keys. The real config is gitignored and never committed.",
+  "_api_key_comment": "data.seoul.go.kr general API key (일반인증키). Free: register at https://data.seoul.go.kr and request the 일반 인증키. Every post credits data.seoul.go.kr (CC-BY).",
+  "api_key": "YOUR_SEOUL_OPENDATA_KEY",
+  "_data4library_comment": "Optional. 도서관 정보나루 (https://data4library.kr) authKey for the (not-yet-wired) books vein. Leave as-is if unused.",
+  "data4library_key": "YOUR_DATA4LIBRARY_KEY",
+  "_kosis_comment": "KOSIS OpenAPI apiKey (https://kosis.kr/openapi) for the national-contrast lines. Free after registration. The key is a base64 string that includes a trailing '='.",
+  "kosis_key": "YOUR_KOSIS_KEY",
+  "handle": "your-handle.bsky.social",
+  "_keychain_comment": "The Bluesky app password is NOT stored here. Put it in the macOS Keychain: security add-generic-password -a \"your-handle.bsky.social\" -s \"seoulindex-bluesky\" -w",
+  "_claude_comment": "The claude -p selector authenticates with a long-lived Claude Code setup-token in the Keychain (account 'seoulbot', service 'claude-oauth-token'). Create one with: claude setup-token"
+}

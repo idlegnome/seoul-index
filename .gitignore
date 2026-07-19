@@ -1,0 +1,14 @@
+# Credentials — never commit the real config
+seoul_index_config.json
+
+# Runtime state and generated caches
+seoul_index_state.json
+sales_agg.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# macOS
+.DS_Store
