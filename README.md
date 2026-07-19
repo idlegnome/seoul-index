@@ -37,6 +37,18 @@ Every post hyperlinks its source.
 
 Requirements: Python 3, the [`atproto`](https://pypi.org/project/atproto/) package (`pip install atproto`), `curl`, and the [Claude Code CLI](https://claude.com/claude-code) for the `claude -p` selector.
 
+### API keys
+
+The bot uses free keys from two South Korean open-data portals, both set in `seoul_index_config.json`:
+
+- Seoul Open Data (`api_key`): Required. The source for most veins (crowds, air, transport, infrastructure, sales). Register a free account at [data.seoul.go.kr](https://data.seoul.go.kr/) and request a general authentication key (일반인증키). One key works across every Seoul Open Data service the bot calls.
+- KOSIS / Statistics Korea (`kosis_key`): Needed only for the national-contrast lines. Register at [kosis.kr](https://kosis.kr/) and request an OpenAPI key at [kosis.kr/openapi](https://kosis.kr/openapi). The key is a base64 string that ends in `=`, so keep the trailing character. Without this key the bot still runs; the national lines simply don't appear.
+- `data4library_key`: Optional and unused by the current code (reserved for a books vein that isn't wired up yet). Leave the placeholder as is.
+
+The Bluesky app password and the Claude token are not API keys; they live in the Keychain, not the config (steps below).
+
+### Configuration
+
 1. Copy the config template and fill in your own free API keys:
    ```
    cp seoul_index_config.example.json seoul_index_config.json
