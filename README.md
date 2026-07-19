@@ -1,8 +1,8 @@
 # Seoul Index
 
-The source code behind **The Seoul Index (숫자로 보는 서울)**, [**@seoul-index.bsky.social**](https://bsky.app/profile/seoul-index.bsky.social): a [Harper's Index](https://harpers.org/harpers-index/)-style Bluesky bot. Each post is a short set of real statistics drawn from Seoul Open Data, arranged so two numbers sit next to each other and make you do a double-take: a near-equal "dead heat", or a wide gap. Posts go out as a thread, an English index followed by a Korean translation as a threaded reply.
+The source code behind **The Seoul Index (숫자로 보는 서울)**, [**@seoul-index.bsky.social**](https://bsky.app/profile/seoul-index.bsky.social): a Bluesky bot. Each post is a short set of real statistics drawn from Seoul Open Data. Posts go out as a thread, an English index followed by a Korean translation as a threaded reply.
 
-The account is written by A.I. and says so in its profile. This repository is published for transparency: the code here is exactly what composes and sends the posts.
+The account is written by A.I. and says so in its profile. This repository is published for transparency: The code here is exactly what composes and sends the posts.
 
 ## Design principle: accuracy over wit
 
