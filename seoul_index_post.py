@@ -44,6 +44,8 @@ from zoneinfo import ZoneInfo
 
 from atproto import Client, client_utils, models
 
+from seoul_index_card import render_card, CardRenderError
+
 HERE = Path(__file__).parent
 CONFIG = HERE / 'seoul_index_config.json'
 STATE = HERE / 'seoul_index_state.json'
@@ -88,8 +90,7 @@ OPENERS = [
     ("20-somethings in Seoul's crowds, right now", '지금 서울 인파의 20대'),
     ('Seoul on the move', '움직이는 서울'),
     ('From the city’s data', '서울시 데이터에서'),
-    ('Seoul in the nation', '전국 속 서울'),
-    ('Seoul and the country', '서울과 전국'),
+    ('Seoul and the nation', '서울과 전국'),
 ]
 
 TAGS = [('Seoul', 'seoul'), ('서울', '서울')]
@@ -508,14 +509,15 @@ Rules:
 - Some ₩ lines are per-VISIT averages (category "avgbill"), not quarterly totals. For those use an average-spend opener like "Average spend per visit in Seoul" (never the "Spent last quarter" one), and never mix avgbill lines with quarterly-total spending lines in one post.
 - For age-group crowd posts, write the age band as a numeral: "20-somethings" (never "Twentysomethings"). Opener e.g. "20-somethings in Seoul's crowds, right now"; lines are bare place names.
 - Do not mix unrelated live "right now" lines with quarterly spending lines in a way that breaks a single frame, unless the contrast itself is the point.
-- "national" lines (Seoul set against the whole country: its share of the population, the fertility-rate gap) are annual figures from a different source. Build them into their own "Seoul in the nation" post — never mix a national line with a live "right now" line or a spending line. The fertility pair is only two lines, so pair it with the population-share line to make a set of three.
+- "national" lines (Seoul set against the whole country: its share of the population, the fertility-rate gap) are annual figures from a different source. Build them into their own "Seoul and the nation" post — never mix a national line with a live "right now" line or a spending line. The fertility pair is only two lines, so pair it with the population-share line to make a set of three.
 - Keep the opener neutral (a time or place framing). Pick one from OPENERS, or write a short neutral one (max ~5 words) — it must NOT give away or hint at the pairing. Provide it in English and Korean.
 - You may lightly reword an English label for wit, but keep its meaning and DO NOT put any digit in a label.
 - Translate every chosen label to natural Korean (labels only — never restate the number in the label).
+- Emoji: give "opener_emoji" one topic emoji that fits the whole set. For each pick, give an "emoji" ONLY where an obvious, tasteful one exists (a food, a shop, a place, a clear object). Leave "emoji" as "" for abstract lines (shares, rates, counts of people, air readings) — a forced emoji looks worse than none. One emoji each, the same emoji works for both languages. NEVER use a number/keycap emoji (0-9, #) — numbers only ever come from the data.
 - Avoid the ids in AVOID_IDS.
 
 Return ONLY JSON:
-{"opener_en":"...","opener_ko":"...","note":"one line: what the juxtaposition is","picks":[{"id":"<pool id>","label_en":"<optional reword or copy>","label_ko":"<korean label>"}]}
+{"opener_en":"...","opener_ko":"...","opener_emoji":"<one emoji or ''>","note":"one line: what the juxtaposition is","picks":[{"id":"<pool id>","label_en":"<optional reword or copy>","label_ko":"<korean label>","emoji":"<one emoji or ''>"}]}
 """
 
 
@@ -565,6 +567,36 @@ def clean_opener(text, fallback):
     if not text or not text.strip():
         return fallback
     return text.strip()[:48]
+
+
+def _valid_emoji(s):
+    """Return a single tasteful emoji if `s` is one, else ''. The card design
+    lets the selector tag lines with an emoji, but numbers must stay Python's
+    alone: reject anything carrying a digit or a keycap (0-9, #, *) so a figure
+    can never reach a post through an emoji. Also reject non-emoji text so a
+    stray label word can't slip in."""
+    if not s or not s.strip():
+        return ''
+    s = s.strip()
+    if any(ch.isdigit() for ch in s):
+        return ''
+    cps = [ord(ch) for ch in s]
+    if 0x20E3 in cps or ord('#') in cps or ord('*') in cps or len(cps) > 8:
+        return ''
+
+    def emoji_ish(o):
+        return (0x1F000 <= o <= 0x1FAFF or 0x2600 <= o <= 0x27BF or
+                0x2B00 <= o <= 0x2BFF or 0x2190 <= o <= 0x21FF or
+                0x1F1E6 <= o <= 0x1F1FF or 0x1F3FB <= o <= 0x1F3FF or
+                o in (0x200D, 0xFE0F, 0x2122, 0x2139, 0x203C, 0x2049))
+
+    def pictograph(o):
+        return (0x1F000 <= o <= 0x1FAFF or 0x2600 <= o <= 0x27BF or
+                0x2B00 <= o <= 0x2BFF or 0x1F1E6 <= o <= 0x1F1FF)
+
+    if not all(emoji_ish(o) for o in cps) or not any(pictograph(o) for o in cps):
+        return ''
+    return s
 
 
 def _sortkey(value_en):
