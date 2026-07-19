@@ -38,6 +38,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -642,19 +643,21 @@ def compose(sel, pool):
     if all(k is not None for k in keys) and len({k[0] for k in keys}) == 1:
         picks = [p for _, p in sorted(zip(keys, picks),
                                       key=lambda kp: kp[0][1], reverse=True)]
-    en_lines, ko_lines, used, cats, estimated = [], [], [], set(), False
+    lines, used, cats, estimated = [], [], set(), False
     for p in picks:
         f = by_id[p['id']]
         label_en = clean_label(p.get('label_en'), f['label_en'], f['value_en'])
         label_ko = clean_label(p.get('label_ko'), f['label_en'], f['value_ko'])
-        en_lines.append(f'{label_en}: {f["value_en"]}')
-        ko_lines.append(f'{label_ko}: {f["value_ko"]}')
+        lines.append({'emoji': _valid_emoji(p.get('emoji')),
+                      'label_en': label_en, 'label_ko': label_ko,
+                      'value_en': f['value_en'], 'value_ko': f['value_ko']})
         used.append(f['id'])
         cats.add(f['cat'])
         estimated = estimated or f['estimated']
 
     opener_en = clean_opener(sel.get('opener_en'), 'Seoul by the numbers')
     opener_ko = clean_opener(sel.get('opener_ko'), '숫자로 보는 서울')
+    opener_emoji = _valid_emoji(sel.get('opener_emoji'))
 
     # Source line credits every distinct source used. Seoul Open Data covers
     # everything except the KOSIS 'national' figures, which get their own credit.
@@ -681,9 +684,25 @@ def compose(sel, pool):
 
     cat_list = [by_id[p['id']]['cat'] for p in picks]
     primary = max(set(cat_list), key=cat_list.count)
-    en_body = opener_en + ':\n' + '\n'.join(en_lines) + '\n' + src_en
-    ko_body = opener_ko + ':\n' + '\n'.join(ko_lines) + '\n' + src_ko
-    return en_body, ko_body, used, list(cats), primary
+
+    # Plaintext bodies (opener + lines + source), used as the card's alt text and
+    # as the whole post if card rendering fails. Emoji sit ahead of the label, as
+    # on the card; the card's "##" markdown token is card-only decoration.
+    def _pl(emoji, label, value):
+        return f'{emoji} {label}: {value}' if emoji else f'{label}: {value}'
+    op_en = f'{opener_emoji} {opener_en}' if opener_emoji else opener_en
+    op_ko = f'{opener_emoji} {opener_ko}' if opener_emoji else opener_ko
+    en_body = op_en + ':\n' + '\n'.join(
+        _pl(l['emoji'], l['label_en'], l['value_en']) for l in lines) + '\n' + src_en
+    ko_body = op_ko + ':\n' + '\n'.join(
+        _pl(l['emoji'], l['label_ko'], l['value_ko']) for l in lines) + '\n' + src_ko
+
+    return {
+        'opener': {'emoji': opener_emoji, 'en': opener_en, 'ko': opener_ko},
+        'lines': lines, 'src_en': src_en, 'src_ko': src_ko,
+        'en_body': en_body, 'ko_body': ko_body,
+        'used': used, 'cats': list(cats), 'primary': primary,
+    }
 
 
 LINK_DOMAINS = [('data.seoul.go.kr', 'https://data.seoul.go.kr'),
@@ -710,6 +729,25 @@ def add_tags(tb, body):
     return tb
 
 
+# --- card rendering --------------------------------------------------------
+
+def _card_payload(c, lang):
+    """Pull the card's opener + lines for one language out of compose()'s output."""
+    opener = {'emoji': c['opener']['emoji'], 'text': c['opener'][lang]}
+    lines = [{'emoji': l['emoji'], 'label': l[f'label_{lang}'], 'value': l[f'value_{lang}']}
+             for l in c['lines']]
+    return opener, lines
+
+
+def render_pair(c, out_dir):
+    """Render the EN and KO cards into out_dir. Returns ((path,size),(path,size))."""
+    en_op, en_lines = _card_payload(c, 'en')
+    ko_op, ko_lines = _card_payload(c, 'ko')
+    en = render_card(en_op, en_lines, Path(out_dir) / 'card_en.png')
+    ko = render_card(ko_op, ko_lines, Path(out_dir) / 'card_ko.png', korean=True)
+    return en, ko
+
+
 # --- main ------------------------------------------------------------------
 
 def main():
@@ -731,33 +769,84 @@ def main():
     print(f'Harvested {len(pool)} candidate facts (rotated away from: {last_cat}).')
 
     sel = select(pool, state)
-    en_body, ko_body, used, cats, primary = compose(sel, pool)
+    c = compose(sel, pool)
+    used, primary = c['used'], c['primary']
 
-    en_tb = add_tags(client_utils.TextBuilder(), en_body)
-    ko_tb = add_tags(client_utils.TextBuilder(), ko_body)
-    en_plain, ko_plain = en_tb.build_text(), ko_tb.build_text()
+    # Each card posts as an image with NO caption, so the card sits at the very
+    # top of its post; the source line + hashtags follow as their own threaded
+    # reply, which keeps data.seoul.go.kr a real clickable link. The full
+    # plaintext body is the card's alt text, and the whole post if rendering fails.
+    en_source = add_tags(client_utils.TextBuilder(), c['src_en'])
+    ko_source = add_tags(client_utils.TextBuilder(), c['src_ko'])
+    en_alt, ko_alt = c['en_body'], c['ko_body']
 
     print(f'\nNote: {sel.get("note", "")}')
-    print(f'\nEN ({len(en_plain)} chars):\n{"-"*46}\n{en_plain}\n{"-"*46}')
-    print(f'\nKO ({len(ko_plain)} chars):\n{"-"*46}\n{ko_plain}\n{"-"*46}')
+    print(f'\nEN alt / fallback ({len(en_alt)} chars):\n{"-"*46}\n{en_alt}\n{"-"*46}')
+    print(f'\nKO alt / fallback ({len(ko_alt)} chars):\n{"-"*46}\n{ko_alt}\n{"-"*46}')
+    print(f'\nEN source post: {en_source.build_text()!r}\nKO source post: {ko_source.build_text()!r}')
 
-    if len(en_plain) > MAX_POST_CHARS or len(ko_plain) > MAX_POST_CHARS:
-        sys.exit(f'Post too long (EN {len(en_plain)}, KO {len(ko_plain)}; max {MAX_POST_CHARS}). '
-                 f'Re-run to reselect.')
+    # The image caption is always short; this guard protects the plaintext
+    # FALLBACK that posts if card rendering fails.
+    if len(en_alt) > MAX_POST_CHARS or len(ko_alt) > MAX_POST_CHARS:
+        sys.exit(f'Fallback text too long (EN {len(en_alt)}, KO {len(ko_alt)}; '
+                 f'max {MAX_POST_CHARS}). Re-run to reselect.')
+
+    # Render both cards; any failure drops us to a plaintext thread so a post
+    # never fails to go out over a rendering hiccup.
+    cards = None
+    try:
+        out_dir = Path.cwd() if DRY_RUN else tempfile.mkdtemp()
+        (en_path, en_size), (ko_path, ko_size) = render_pair(c, out_dir)
+        cards = {'en': (Path(en_path).read_bytes(), en_size),
+                 'ko': (Path(ko_path).read_bytes(), ko_size)}
+        print(f'\nRendered cards — EN {en_size}, KO {ko_size}.')
+        if not DRY_RUN:
+            import shutil
+            shutil.rmtree(out_dir, ignore_errors=True)
+    except CardRenderError as e:
+        print(f'\nCard render failed ({e}); falling back to a plaintext thread.')
 
     if DRY_RUN:
-        print('\n(dry run — not posting)')
+        if cards:
+            print(f'\n(dry run — wrote {out_dir}/card_en.png and card_ko.png, not posting)')
+        else:
+            print('\n(dry run — not posting)')
         return
 
     handle = config['handle']
     password = keychain_password(handle, KEYCHAIN_SERVICE)
     bsky = Client()
     bsky.login(handle, password)
-    root = bsky.send_post(text=en_tb, langs=['en'])
-    root_ref = models.create_strong_ref(root)
-    reply_ref = models.AppBskyFeedPost.ReplyRef(parent=root_ref, root=root_ref)
-    bsky.send_post(text=ko_tb, reply_to=reply_ref, langs=['ko'])
-    print('\nPosted (English + Korean thread).')
+    if cards:
+        (en_bytes, en_size), (ko_bytes, ko_size) = cards['en'], cards['ko']
+        en_ar = models.AppBskyEmbedDefs.AspectRatio(width=en_size[0], height=en_size[1])
+        ko_ar = models.AppBskyEmbedDefs.AspectRatio(width=ko_size[0], height=ko_size[1])
+
+        def _reply(parent_ref, root_ref):
+            return models.AppBskyFeedPost.ReplyRef(parent=parent_ref, root=root_ref)
+
+        # 4-post chain: EN card → EN source → KO card → KO source. Cards carry no
+        # text so the image is first; each source reply carries the clickable
+        # link + tags. Every reply's root stays the first (EN card) post.
+        p1 = bsky.send_image(text='', image=en_bytes, image_alt=en_alt,
+                             langs=['en'], image_aspect_ratio=en_ar)
+        root_ref = models.create_strong_ref(p1)
+        p2 = bsky.send_post(text=en_source, reply_to=_reply(root_ref, root_ref), langs=['en'])
+        p2_ref = models.create_strong_ref(p2)
+        p3 = bsky.send_image(text='', image=ko_bytes, image_alt=ko_alt,
+                             reply_to=_reply(p2_ref, root_ref), langs=['ko'],
+                             image_aspect_ratio=ko_ar)
+        p3_ref = models.create_strong_ref(p3)
+        bsky.send_post(text=ko_source, reply_to=_reply(p3_ref, root_ref), langs=['ko'])
+        print('\nPosted (4-post thread: EN card, EN source, KO card, KO source).')
+    else:
+        en_full = add_tags(client_utils.TextBuilder(), c['en_body'])
+        ko_full = add_tags(client_utils.TextBuilder(), c['ko_body'])
+        root = bsky.send_post(text=en_full, langs=['en'])
+        root_ref = models.create_strong_ref(root)
+        reply_ref = models.AppBskyFeedPost.ReplyRef(parent=root_ref, root=root_ref)
+        bsky.send_post(text=ko_full, reply_to=reply_ref, langs=['ko'])
+        print('\nPosted (English + Korean thread, plaintext fallback).')
 
     recent_ids = (state.get('recent_ids', []) + used)[-RECENT_IDS_KEEP:]
     state['recent_ids'] = recent_ids

@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""
+Post the Seoul Index methodology / "about" thread as prose cards, then pin it.
+
+This is STATIC content, not part of the daily automation (no launchd). Run it by
+hand — in particular as the first thing after a fresh-start wipe, so the pinned
+thread carries the new card look. Posting it stands up a 5-post thread:
+
+  1. EN "About this account" card   (image, no caption)
+  2. EN "About the crowd figures" card
+  3. KO "이 계정에 대하여" card
+  4. KO "인파 수치에 대하여" card
+  5. a short reply with a clickable data.seoul.go.kr link
+
+Each card's full text is its alt text. The link stays clickable because it lives
+in the trailing text reply, not the image (Bluesky renders post text above the
+image, so a caption can't sit under the card — same reason the index posts use a
+trailing source reply).
+
+Usage:
+  python3 seoul_index_methodology.py --dry-run   # render cards to cwd, print plan
+  python3 seoul_index_methodology.py             # post the thread
+  python3 seoul_index_methodology.py --pin        # post, then pin the root
+"""
+
+import sys
+import tempfile
+from pathlib import Path
+
+from atproto import Client, client_utils, models
+
+from seoul_index_card import render_prose_card
+from seoul_index_post import CONFIG, KEYCHAIN_SERVICE, keychain_password
+import json
+
+DRY_RUN = '--dry-run' in sys.argv
+PIN = '--pin' in sys.argv
+HERE = Path(__file__).parent
+
+# --- content (exact approved prose; thread-marker emoji dropped for the card) --
+
+EN_INTRO = ('This account provides a portrait of Seoul, based on its open data '
+            '(data.seoul.go.kr). Fixed counts appear exactly as published: subway '
+            'taps, libraries, Wi-Fi, events, quarterly sales. The figures are the '
+            'city’s; an A.I. chooses which to set side by side and largely '
+            'writes the posts.')
+EN_CAVEAT = ('Crowd figures are different: How many people are in a place, and '
+             'their age, gender and visitor split, are not head counts. KT models '
+             'them from mobile-signal data and scales to the whole city, so read '
+             'them as directional, most reliable for ages 20–50.')
+KO_INTRO = ('‘숫자로 보는 서울’은 '
+            '서울시 공공데이터(data.seoul.go.kr)로 '
+            '그리는 서울의 초상입니다. '
+            '지하철 승하차, 도서관·와이파이 '
+            '수, 행사, 분기별 매출 등 고정 '
+            '수치는 공개된 값 그대로입니다. '
+            '숫자는 서울시의 데이터 그대로이고, '
+            '조합과 글쓰기는 대부분 A.I.가 합니다.')
+KO_CAVEAT = ('‘인구’ 수치(특정 장소의 '
+             '실시간 인구, 연령·성별, 방문객 '
+             '비율)는 실측이 아니라 KT가 통신 '
+             '신호로 추정해 전체 인구로 보정한 '
+             '값입니다. 20~50대 구간이 가장 '
+             '정확합니다. 자동 계정')
+
+CARDS = [
+    {'lang': 'en', 'heading': 'About this account', 'emoji': '\U0001f3d9️', 'body': [EN_INTRO]},
+    {'lang': 'en', 'heading': 'About the crowd figures', 'emoji': '\U0001f465', 'body': [EN_CAVEAT]},
+    {'lang': 'ko', 'heading': '이 계정에 대하여', 'emoji': '\U0001f3d9️', 'body': [KO_INTRO]},
+    {'lang': 'ko', 'heading': '인구 수치에 대하여', 'emoji': '\U0001f465', 'body': [KO_CAVEAT]},
+]
+
+SOURCE_LINE = 'Source · 출처: data.seoul.go.kr'
+SOURCE_DOMAIN = 'data.seoul.go.kr'
+SOURCE_URL = 'https://data.seoul.go.kr'
+
+
+def _alt(card):
+    return card['heading'] + '\n\n' + '\n\n'.join(card['body'])
+
+
+def _source_tb():
+    """Clickable source line, no hashtags — keeps the pinned thread clean."""
+    tb = client_utils.TextBuilder()
+    i = SOURCE_LINE.find(SOURCE_DOMAIN)
+    tb.text(SOURCE_LINE[:i]).link(SOURCE_DOMAIN, SOURCE_URL)
+    tb.text(SOURCE_LINE[i + len(SOURCE_DOMAIN):])
+    return tb
+
+
+def render_all(out_dir):
+    out = []
+    for i, card in enumerate(CARDS):
+        path = Path(out_dir) / f'meth_{i}_{card["lang"]}.png'
+        _, size = render_prose_card(card['heading'], card['body'], path,
+                                    korean=(card['lang'] == 'ko'), emoji=card['emoji'])
+        out.append((str(path), size))
+    return out
+
+
+def main():
+    rendered = render_all(Path.cwd() if DRY_RUN else tempfile.mkdtemp())
+
+    print('Methodology thread plan:')
+    for card, (path, size) in zip(CARDS, rendered):
+        print(f'  [{card["lang"]}] {card["emoji"]} {card["heading"]} — {size}  {path}')
+    print(f'  [reply] {_source_tb().build_text()!r} (data.seoul.go.kr clickable)')
+
+    if DRY_RUN:
+        print('\n(dry run — rendered cards, not posting)')
+        return
+
+    config = json.loads(CONFIG.read_text())
+    handle = config['handle']
+    password = keychain_password(handle, KEYCHAIN_SERVICE)
+    bsky = Client()
+    bsky.login(handle, password)
+
+    def _reply(parent_ref, root_ref):
+        return models.AppBskyFeedPost.ReplyRef(parent=parent_ref, root=root_ref)
+
+    root_ref = None
+    prev_ref = None
+    for card, (path, size) in zip(CARDS, rendered):
+        ar = models.AppBskyEmbedDefs.AspectRatio(width=size[0], height=size[1])
+        img = Path(path).read_bytes()
+        kwargs = dict(text='', image=img, image_alt=_alt(card),
+                      langs=[card['lang']], image_aspect_ratio=ar)
+        if prev_ref is not None:
+            kwargs['reply_to'] = _reply(prev_ref, root_ref)
+        post = bsky.send_image(**kwargs)
+        prev_ref = models.create_strong_ref(post)
+        if root_ref is None:
+            root_ref = prev_ref
+    # Trailing clickable source reply.
+    bsky.send_post(text=_source_tb(), reply_to=_reply(prev_ref, root_ref))
+    print('\nPosted methodology thread (4 cards + source reply).')
+
+    if PIN:
+        pin_post(bsky, root_ref)
+        print('Pinned the thread root.')
+
+
+def pin_post(bsky, root_ref):
+    """Pin root_ref by updating ONLY the pinned_post field of the existing
+    profile record, so the avatar/description are preserved."""
+    got = bsky.com.atproto.repo.get_record(
+        models.ComAtprotoRepoGetRecord.Params(
+            repo=bsky.me.did, collection='app.bsky.actor.profile', rkey='self'))
+    record = got.value
+    record.pinned_post = models.ComAtprotoRepoStrongRef.Main(
+        cid=root_ref.cid, uri=root_ref.uri)
+    bsky.com.atproto.repo.put_record(
+        models.ComAtprotoRepoPutRecord.Data(
+            repo=bsky.me.did, collection='app.bsky.actor.profile', rkey='self',
+            record=record, swap_record=got.cid))
+
+
+if __name__ == '__main__':
+    main()

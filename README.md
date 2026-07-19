@@ -1,6 +1,6 @@
 # Seoul Index
 
-The source code behind **The Seoul Index (숫자로 보는 서울)**, [**@seoul-index.bsky.social**](https://bsky.app/profile/seoul-index.bsky.social), a Bluesky bot. Each post is a short set of real statistics drawn from Seoul Open Data. Posts go out as a thread, an English index followed by a Korean translation as a threaded reply.
+The source code behind **The Seoul Index (숫자로 보는 서울)**, [**@seoul-index.bsky.social**](https://bsky.app/profile/seoul-index.bsky.social), a Bluesky bot. Each post is a short set of real statistics drawn from Seoul Open Data, rendered as a card image. A post goes out as a four-post thread: an English card, then a Korean one, each followed by a short reply carrying the clickable source and tags.
 
 The account is written by A.I. and says so in its profile. This repository is published for transparency: The code here is exactly what composes and sends the posts.
 
@@ -13,9 +13,13 @@ The account is written by A.I. and says so in its profile. This repository is pu
 1. **Harvest** a pool of candidate facts from the live and cached data sources (see below). Each fact carries an exact, pre-formatted value.
 2. **Select** with `claude -p`: it picks 3 to 4 lines that form a coherent set, preferring to build around one pre-detected pair, and writes a neutral opener plus Korean labels.
 3. **Compose**: Python stitches the chosen labels back onto its own exact values, adds the source line and tags, and enforces the character limit.
-4. **Post** the English index, then the Korean translation as a threaded reply.
+4. **Render and post**: each index is drawn as a card image (the numbers on the card), and the thread goes out as the English card, a reply with its clickable source and tags, the Korean card, then its source reply. Each card's full text is its image alt text.
 
-Category rotation keeps two consecutive posts off the same metric.
+Category rotation keeps two consecutive posts off the same metric. A topical emoji leads the opener, and per-line emoji are added only where an obvious one fits; a guard rejects any number or keycap emoji so figures stay Python's alone.
+
+## Card images
+
+Each index is rendered to a PNG by `seoul_index_card.py`: the card is laid out in HTML, screenshotted with headless Google Chrome, then cropped to content with Pillow. Colour emoji and Korean text come from the system fonts, and the look is monospace on cream to match the avatar. If rendering ever fails, the poster falls back to a plaintext thread, so a post always goes out. The pinned methodology thread is built the same way, as prose cards, by `seoul_index_methodology.py`.
 
 ## Data sources
 
@@ -28,14 +32,16 @@ Every post hyperlinks its source.
 
 | File | Purpose |
 | --- | --- |
-| `seoul_index_post.py` | Harvest, select, compose and post one index (English then Korean). |
+| `seoul_index_post.py` | Harvest, select, compose, render and post one index (English + Korean card thread). |
+| `seoul_index_card.py` | Render an index or prose card to a PNG (headless Chrome, cropped with Pillow); the poster falls back to plaintext if it fails. |
+| `seoul_index_methodology.py` | Post the pinned methodology / "about" thread as prose cards. |
 | `seoul_index_sales.py` | Weekly full scan of the commercial-district sales dataset into `sales_agg.json` (the poster reads this cheaply). |
 | `seoul_index_config.example.json` | Template for the gitignored `seoul_index_config.json`. |
 | `seoul_index_avatar.svg` | The account avatar. |
 
 ## Setup
 
-Requirements: Python 3, the [`atproto`](https://pypi.org/project/atproto/) package (`pip install atproto`), `curl`, and the [Claude Code CLI](https://claude.com/claude-code) for the `claude -p` selector.
+Requirements: Python 3, the [`atproto`](https://pypi.org/project/atproto/) and [`Pillow`](https://pypi.org/project/pillow/) packages (`pip install atproto pillow`), `curl`, Google Chrome (for headless card rendering), and the [Claude Code CLI](https://claude.com/claude-code) for the `claude -p` selector.
 
 ### API keys
 
@@ -67,7 +73,7 @@ Run it:
 
 ```
 python3 seoul_index_post.py --dry-run   # harvest, select, compose and print, no post
-python3 seoul_index_post.py             # post one index (English then Korean thread)
+python3 seoul_index_post.py             # post one index (English + Korean card thread)
 ```
 
 The live account posts twice a day (12:30 p.m. and 8:30 p.m. KST) via `launchd`, with the sales scan refreshing weekly.
