@@ -503,6 +503,7 @@ You are given a POOL of candidate lines (each already has an exact value you mus
 Rules:
 - Choose 3 to 4 lines that form a coherent set. STRONGLY prefer building around one PAIR (a dead heat or a wide gap) — that is the joke.
 - House style is Harper's Index: let the arrangement carry the joke. NEVER add a line that explains or points out the juxtaposition, and never editorialise. Just the labelled numbers.
+- Do NOT worry about line order: when the lines share a unit (e.g. an all-₩ post) they are automatically sorted by value, largest first. A near-equal "dead heat" still lands because near-equal values end up next to each other. Just choose a coherent set.
 - Each line is a bare "Label: value". Do NOT repeat a shared verb or metric on every line — put it once in the opener. For spending posts (₩ amounts), pick an opener that carries the verb, e.g. "Spent last quarter in Seoul", so lines read "Coffee shops: ₩651.4bn", never "Spent at coffee shops: ...".
 - Some ₩ lines are per-VISIT averages (category "avgbill"), not quarterly totals. For those use an average-spend opener like "Average spend per visit in Seoul" (never the "Spent last quarter" one), and never mix avgbill lines with quarterly-total spending lines in one post.
 - For age-group crowd posts, write the age band as a numeral: "20-somethings" (never "Twentysomethings"). Opener e.g. "20-somethings in Seoul's crowds, right now"; lines are bare place names.
@@ -566,11 +567,49 @@ def clean_opener(text, fallback):
     return text.strip()[:48]
 
 
+def _sortkey(value_en):
+    """(unit_class, magnitude) for a formatted value, or None if unparseable.
+    Lets compose() order a post's lines by size, but only among lines that share
+    a unit (so a ₩ post sorts, a mixed count+% narrative post is left alone)."""
+    s = value_en.strip()
+    if s.startswith('₩'):
+        num, mult = s[1:], 1.0
+        for suf, m in (('tn', 1e12), ('bn', 1e9), ('m', 1e6)):
+            if num.endswith(suf):
+                num, mult = num[:-len(suf)], m
+                break
+        try:
+            return ('won', float(num.replace(',', '')) * mult)
+        except ValueError:
+            return None
+    if s.endswith('%'):
+        try:
+            return ('pct', float(s[:-1]))
+        except ValueError:
+            return None
+    if 'µg' in s:
+        try:
+            return ('air', float(s.split()[0]))
+        except ValueError:
+            return None
+    try:
+        return ('num', float(s.replace(',', '')))
+    except ValueError:
+        return None
+
+
 def compose(sel, pool):
     by_id = {f['id']: f for f in pool}
     picks = [p for p in sel.get('picks', []) if p.get('id') in by_id]
     if len(picks) < 3:
         raise RuntimeError(f'selector returned too few valid picks: {len(picks)}')
+    # Order the lines by value, largest first, but only when every line shares a
+    # unit (an all-₩ or all-% post). Mixed-unit posts (e.g. a national post's two
+    # population counts then a share %) keep the selector's narrative order.
+    keys = [_sortkey(by_id[p['id']]['value_en']) for p in picks]
+    if all(k is not None for k in keys) and len({k[0] for k in keys}) == 1:
+        picks = [p for _, p in sorted(zip(keys, picks),
+                                      key=lambda kp: kp[0][1], reverse=True)]
     en_lines, ko_lines, used, cats, estimated = [], [], [], set(), False
     for p in picks:
         f = by_id[p['id']]
