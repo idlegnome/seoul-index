@@ -33,6 +33,8 @@ Usage:
   python3 seoul_index_post.py --spotlight --dry-run   # force the single-place card
 """
 
+import csv
+import io
 import json
 import os
 import re
@@ -180,6 +182,11 @@ OPENERS = [
     ('Seoul on the move', '움직이는 서울'),
     ('From the city’s data', '서울시 데이터에서'),
     ('Seoul and the nation', '서울과 전국'),
+    ('Seoul among world cities', '세계 도시 속의 서울'),
+    ('Green space per person', '1인당 녹지 면적'),
+    ('Within a five-minute walk of transit', '도보 5분 내 대중교통'),
+    ('Summer nights, hotter than the countryside', '여름밤, 도시가 더 더운 만큼'),
+    ('People per square kilometre', '1제곱킬로미터당 인구'),
 ]
 
 TAGS = [('Seoul', 'seoul'), ('서울', '서울')]
@@ -728,6 +735,136 @@ def kosis_facts(kosis_key):
     return facts
 
 
+# --- world cities (OECD functional urban areas) ----------------------------
+# The OECD's SDMX service publishes its FUA ("functional urban area") database:
+# one publisher measuring every metro area the same way, which is the only kind
+# of source a Seoul-vs-other-cities line can honestly be built on. A FUA is the
+# built-up core plus its commuting belt, so KOR01F is the whole Seoul capital
+# region (~24m people), NOT the 9.6m of Seoul city that the KOSIS lines use.
+# Every world label therefore says "metro area" and compose() puts the metric,
+# the FUA caveat and the year on the source line.
+#
+# No API key. CSV comes back with one row per (city, measure, year); the key is
+# positional, so a dataflow needs exactly as many dots as it has dimensions
+# after REF_AREA — _sdmx_csv() reads the count out of the service's own error
+# message if the DSD ever gains a dimension.
+
+OECD_BASE = 'https://sdmx.oecd.org/public/rest/data/OECD.CFE.EDS'
+OECD_DOMAIN = 'data-explorer.oecd.org'
+
+# Peers chosen to be recognisable to both an English and a Korean reader. Any
+# city missing from a given year is simply dropped, so this list is safe to grow.
+WORLD_CITIES = [
+    ('KOR01F', 'Seoul'),
+    ('JPN01F', 'Tokyo'),
+    ('JPN02F', 'Osaka'),
+    ('FR001F', 'Paris'),
+    ('UK001F', 'London'),
+    ('USA01F', 'New York'),
+    ('DE001F', 'Berlin'),
+    ('ES001F', 'Madrid'),
+    ('NL001F', 'Amsterdam'),
+]
+
+# (key, dataflow, dots after REF_AREA, row filter, metric label EN/KO, formatter)
+WORLD_MEASURES = [
+    ('green', 'DSD_FUA_ENV@DF_GREEN_AREA', 6,
+     {'MEASURE': 'GREEN_AREA', 'UNIT_MEASURE': 'M2_PS'},
+     ('Green space per person', '1인당 녹지 면적'),
+     lambda v: f'{v:,.0f}m²'),
+    ('transit', 'DSD_FUA_TRAN@DF_PT_ACCESS', 7,
+     {'MEASURE': 'POP_WITH_ACCESS', 'TRAVEL_TIME': 'MN_LE5', 'SERVICE': 'PT_STOP'},
+     ('Share of people within a 5-minute walk of a transit stop',
+      '도보 5분 내 대중교통 정류장 이용 가능 인구 비율'),
+     lambda v: f'{v:.1f}%'),
+    ('heat', 'DSD_FUA_ENV@DF_UHI', 6,
+     {'MEASURE': 'UHI', 'TIME_SEASON': 'NIGHT_SUMMER'},
+     ('Urban heat island, summer nights', '여름밤 도시 열섬 강도'),
+     lambda v: f'{v:.1f}°C'),
+    ('density', 'DSD_FUA_TERR@DF_DENSITY', 4,
+     {'MEASURE': 'POP_DEN'},
+     ('People per square kilometre', '1제곱킬로미터당 인구'),
+     lambda v: f'{v:,.0f}/km²'),
+]
+
+WORLD_METRICS = {key: labels for key, _, _, _, labels, _ in WORLD_MEASURES}
+
+# A world post needs Seoul plus at least this many peers, all in the SAME year.
+# Mixed vintages are the trap here: the OECD's latest density figure is 2020 for
+# London and 2024 for Amsterdam, and setting those side by side would be a
+# comparison of survey dates dressed up as a comparison of cities.
+WORLD_MIN_PEERS = 2
+
+
+def _sdmx_csv(flow, ndots, codes, start_period):
+    """One OECD SDMX-REST query, returned as a list of dict rows (or [])."""
+    codes = '+'.join(codes)
+    for _ in range(3):
+        url = (f'{OECD_BASE},{flow},/{codes}{"." * ndots}'
+               f'?startPeriod={start_period}')
+        r = subprocess.run(['curl', '-s', '--max-time', '60', '-H',
+                            'Accept: application/vnd.sdmx.data+csv', url],
+                           capture_output=True, text=True)
+        text = r.stdout if r.returncode == 0 else ''
+        if text.lstrip().startswith('DATAFLOW'):
+            return list(csv.DictReader(io.StringIO(text)))
+        # "Not enough key values in query, expecting 9 got 8" — the DSD gained or
+        # lost a dimension; take the service's own count and retry once.
+        m = re.search(r'expecting (\d+) got (\d+)', text)
+        if m:
+            want = int(m.group(1)) - 1
+            if want == ndots or not 0 <= want <= 20:
+                return []
+            ndots = want
+    return []
+
+
+def _world_latest_common_year(rows, filt, names):
+    """Newest year in which Seoul and enough peers all report. Returns
+    (year, {code: float}) or (None, {})."""
+    by_year = {}
+    for r in rows:
+        if any(r.get(k) != v for k, v in filt.items()):
+            continue
+        code = r.get('REF_AREA')
+        if code not in names:
+            continue
+        try:
+            by_year.setdefault(r['TIME_PERIOD'], {})[code] = float(r['OBS_VALUE'])
+        except (KeyError, TypeError, ValueError):
+            continue
+    for year in sorted(by_year, reverse=True):
+        vals = by_year[year]
+        if 'KOR01F' in vals and len(vals) >= WORLD_MIN_PEERS + 1:
+            return year, vals
+    return None, {}
+
+
+def world_facts():
+    """Seoul against peer metro areas, one OECD measure at a time.
+
+    Every measure yields its own pair (city_green, city_transit, ...) so the
+    selector builds a post around a single metric: the lines are bare city
+    names, and it is the opener that says what is being counted."""
+    names = dict(WORLD_CITIES)
+    codes = [c for c, _ in WORLD_CITIES]
+    out = []
+    for key, flow, ndots, filt, _labels, fmt in WORLD_MEASURES:
+        try:
+            rows = _sdmx_csv(flow, ndots, codes, 2015)
+            year, vals = _world_latest_common_year(rows, filt, names)
+            if not year:
+                continue
+            for code, v in vals.items():
+                value = fmt(v)
+                out.append(fact(f'world_{key}_{code}', 'world',
+                                f'{names[code]} metro area', value, value,
+                                pair=f'city_{key}', year=year))
+        except (RuntimeError, KeyError, IndexError, ValueError):
+            continue
+    return out
+
+
 # --- selection + composition ----------------------------------------------
 
 def build_pool(api_key, state, kosis_key=None):
@@ -738,6 +875,7 @@ def build_pool(api_key, state, kosis_key=None):
     pool += count_facts(api_key)
     pool += sales_facts()
     pool += kosis_facts(kosis_key)
+    pool += world_facts()
     return pool
 
 
@@ -755,7 +893,8 @@ Rules:
 - For age-group crowd posts, write the age band as a numeral: "20-somethings" (never "Twentysomethings"). Opener e.g. "20-somethings in Seoul's crowds, right now"; lines are bare place names.
 - Do not mix unrelated live "right now" lines with quarterly spending lines in a way that breaks a single frame, unless the contrast itself is the point.
 - "national" lines (Seoul set against the whole country: its share of the population, the fertility-rate gap) are annual figures from a different source. Build them into their own "Seoul and the nation" post — never mix a national line with a live "right now" line or a spending line. The fertility pair is only two lines, so pair it with the population-share line to make a set of three.
-- Keep the opener neutral (a time or place framing). Pick one from OPENERS, or write a short neutral one (max ~5 words) — it must NOT give away or hint at the pairing. Provide it in English and Korean.
+- "world" lines set Seoul's metro area against other cities' metro areas, from the OECD. Their labels are BARE CITY NAMES, so the opener MUST say what is being measured (e.g. "Green space per person", "Within a five-minute walk of transit") — this is the one case where the opener names the metric. Build them into their own post: every world line in a post must come from the SAME pair (all city_green, or all city_transit, never a mix), and a world line NEVER appears alongside a Seoul-only line of any other category. Always include the Seoul line.
+- Keep the opener neutral (a time or place framing), EXCEPT on a world post, where it must name the metric as described above. Pick one from OPENERS, or write a short neutral one (max ~5 words) — it must NOT give away or hint at the pairing. Provide it in English and Korean.
 - You may lightly reword an English label for wit, but keep its meaning and DO NOT put any digit in a label.
 - Translate every chosen label to natural Korean (labels only — never restate the number in the label).
 - Emoji: give "opener_emoji" one topic emoji that fits the whole set. For each pick, give an "emoji" ONLY where an obvious, tasteful one exists (a food, a shop, a place, a clear object). Leave "emoji" as "" for abstract lines (shares, rates, counts of people, air readings) — a forced emoji looks worse than none. One emoji each, the same emoji works for both languages. NEVER use a number/keycap emoji (0-9, #) — numbers only ever come from the data.
@@ -867,6 +1006,14 @@ def _sortkey(value_en):
     if 'µg' in s:
         try:
             return ('air', float(s.split()[0]))
+        except ValueError:
+            return None
+    # A number with a trailing unit ('46m²', '2.2°C', '3,611/km²'): sortable
+    # against other lines carrying the SAME unit, which is what a world post is.
+    m = re.fullmatch(r'([\d,]+(?:\.\d+)?)\s*(\D+)', s)
+    if m:
+        try:
+            return (f'u:{m.group(2).strip()}', float(m.group(1).replace(',', '')))
         except ValueError:
             return None
     try:
@@ -1032,14 +1179,17 @@ def compose(sel, pool):
 
     # Source line credits every distinct source used. Seoul Open Data covers
     # everything except the KOSIS 'national' figures, which get their own credit.
-    uses_seoul = any(c != 'national' for c in cats)
+    uses_seoul = any(c not in ('national', 'world') for c in cats)
     uses_kosis = 'national' in cats
-    if uses_seoul and uses_kosis:
-        src_en, src_ko = 'Sources: data.seoul.go.kr, kosis.kr', '출처: data.seoul.go.kr, kosis.kr'
-    elif uses_kosis:
-        src_en, src_ko = 'Source: kosis.kr', '출처: kosis.kr'
-    else:
-        src_en, src_ko = 'Source: data.seoul.go.kr', '출처: data.seoul.go.kr'
+    uses_oecd = 'world' in cats
+    srcs = (['data.seoul.go.kr'] if uses_seoul else []) + \
+           (['kosis.kr'] if uses_kosis else []) + \
+           ([OECD_DOMAIN] if uses_oecd else [])
+    if not srcs:
+        srcs = ['data.seoul.go.kr']
+    joined = ', '.join(srcs)
+    label = 'Sources' if len(srcs) > 1 else 'Source'
+    src_en, src_ko = f'{label}: {joined}', f'출처: {joined}'
     if ('spending' in cats or 'avgbill' in cats) and SALES_Q['en']:
         src_en += f' · Commercial districts, {SALES_Q["en"]}'
         src_ko += f' · 상권, {SALES_Q["ko"]}'
@@ -1049,6 +1199,23 @@ def compose(sel, pool):
         yr = f', {"/".join(years)}' if years else ''
         src_en += f' · Statistics Korea{yr}'
         src_ko += f' · 통계청{yr}'
+    if uses_oecd:
+        # Name the metric and the year here rather than trusting the opener, and
+        # flag that these are whole metro areas — Seoul's FUA is the capital
+        # region, several times the city the other lines describe.
+        wf = [by_id[p['id']] for p in picks if by_id[p['id']]['cat'] == 'world']
+        keys = sorted({f['id'].split('_')[1] for f in wf})
+        years = sorted({f['year'] for f in wf if f.get('year')})
+        met_en = ', '.join(WORLD_METRICS[k][0] for k in keys if k in WORLD_METRICS)
+        met_ko = ', '.join(WORLD_METRICS[k][1] for k in keys if k in WORLD_METRICS)
+        yr = f', {"/".join(years)}' if years else ''
+        # No bare "OECD" here: the domain already carries it, and the pinned
+        # methodology card is where the publisher gets named in full.
+        src_en += ' · ' + ', '.join(([met_en] if met_en else []) + [f'metro areas{yr}'])
+        src_ko += ' · ' + ', '.join(([met_ko] if met_ko else []) + [f'광역도시권{yr}'])
+    if estimated:
+        src_en += ' · crowds KT-estimated'
+        src_ko += ' · 인구는 KT 추정'
     # How the crowd figures are arrived at is a caveat on the numbers themselves,
     # not a credit, so it rides on the card beside them rather than in the source
     # reply. It carries no link, so nothing is lost by taking it off the reply.
@@ -1096,7 +1263,8 @@ def compose(sel, pool):
 
 
 LINK_DOMAINS = [('data.seoul.go.kr', 'https://data.seoul.go.kr'),
-                ('kosis.kr', 'https://kosis.kr')]
+                ('kosis.kr', 'https://kosis.kr'),
+                (OECD_DOMAIN, f'https://{OECD_DOMAIN}')]
 
 
 def add_tags(tb, body, extra=None):

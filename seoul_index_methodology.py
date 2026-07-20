@@ -4,13 +4,15 @@ Post the Seoul Index methodology / "about" thread as prose cards, then pin it.
 
 This is STATIC content, not part of the daily automation (no launchd). Run it by
 hand — in particular as the first thing after a fresh-start wipe, so the pinned
-thread carries the new card look. Posting it stands up a 5-post thread:
+thread carries the new card look. Posting it stands up a 7-post thread:
 
   1. EN "About this account" card   (image, no caption)
   2. EN "About the crowd figures" card
-  3. KO "이 계정에 대하여" card
-  4. KO "인파 수치에 대하여" card
-  5. a short reply with a clickable data.seoul.go.kr link
+  3. EN "About the city comparisons" card
+  4. KO "이 계정에 대하여" card
+  5. KO "인구 수치에 대하여" card
+  6. KO "도시 비교에 대하여" card
+  7. a short reply with clickable source links
 
 Each card's full text is its alt text. The link stays clickable because it lives
 in the trailing text reply, not the image (Bluesky renders post text above the
@@ -39,7 +41,7 @@ HERE = Path(__file__).parent
 
 # --- content (exact approved prose; thread-marker emoji dropped for the card) --
 
-EN_INTRO = ('This account provides a portrait of Seoul, based on its open data '
+EN_INTRO = ('This account provides a portrait of Seoul, based mainly on its open data '
             '(data.seoul.go.kr). Fixed counts appear exactly as published: subway '
             'taps, libraries, Wi-Fi, events, quarterly sales. The figures are the '
             'city’s; an A.I. chooses which to set side by side and largely '
@@ -49,7 +51,7 @@ EN_CAVEAT = ('Crowd figures are different: How many people are in a place, and '
              'them from mobile-signal data and scales to the whole city, so read '
              'them as directional, most reliable for ages 20–50.')
 KO_INTRO = ('‘숫자로 보는 서울’은 '
-            '서울시 공공데이터(data.seoul.go.kr)로 '
+            '주로 서울시 공공데이터(data.seoul.go.kr)로 '
             '그리는 서울의 초상입니다. '
             '지하철 승하차, 도서관·와이파이 '
             '수, 행사, 분기별 매출 등 고정 '
@@ -62,17 +64,39 @@ KO_CAVEAT = ('‘인구’ 수치(특정 장소의 '
              '신호로 추정해 전체 인구로 보정한 '
              '값입니다. 20~50대 구간이 가장 '
              '정확합니다. 자동 계정')
+# City comparisons are a third kind of figure: a different publisher, and a
+# different Seoul. The OECD reports functional urban areas, so its Seoul is the
+# capital region, not the city the rest of the account counts. Saying so here is
+# the point of the card — the same caveat rides on every comparison post's
+# source line, but the reasoning only fits in the pinned thread.
+EN_CITIES = ('Some posts set Seoul beside other cities. Those comparisons come from '
+             'the OECD, which measures every city the same way. They cover whole '
+             'metropolitan areas, so Seoul here is the capital region of about 24 '
+             'million, not the 9.6 million city the other posts count.')
+KO_CITIES = ('일부 게시물은 서울을 다른 '
+             '도시와 나란히 놓습니다. 이 수치는 '
+             '모든 도시를 같은 기준으로 '
+             '측정하는 경제협력개발기구(OECD) '
+             '자료입니다. '
+             '광역도시권 기준이므로 여기서 '
+             '서울은 인구 약 960만 명의 '
+             '서울시가 아니라 약 2,400만 명의 '
+             '수도권을 뜻합니다.')
 
 CARDS = [
     {'lang': 'en', 'heading': 'About this account', 'emoji': '\U0001f3d9️', 'body': [EN_INTRO]},
     {'lang': 'en', 'heading': 'About the crowd figures', 'emoji': '\U0001f465', 'body': [EN_CAVEAT]},
+    {'lang': 'en', 'heading': 'About the city comparisons', 'emoji': '\U0001f30f', 'body': [EN_CITIES]},
     {'lang': 'ko', 'heading': '이 계정에 대하여', 'emoji': '\U0001f3d9️', 'body': [KO_INTRO]},
     {'lang': 'ko', 'heading': '인구 수치에 대하여', 'emoji': '\U0001f465', 'body': [KO_CAVEAT]},
+    {'lang': 'ko', 'heading': '도시 비교에 대하여', 'emoji': '\U0001f30f', 'body': [KO_CITIES]},
 ]
 
-SOURCE_LINE = 'Source · 출처: data.seoul.go.kr'
-SOURCE_DOMAIN = 'data.seoul.go.kr'
-SOURCE_URL = 'https://data.seoul.go.kr'
+# Every publisher the bot draws on, each hyperlinked in the trailing reply.
+SOURCE_LINE = 'Sources · 출처: data.seoul.go.kr, kosis.kr, data-explorer.oecd.org'
+SOURCE_DOMAINS = [('data.seoul.go.kr', 'https://data.seoul.go.kr'),
+                  ('kosis.kr', 'https://kosis.kr'),
+                  ('data-explorer.oecd.org', 'https://data-explorer.oecd.org')]
 
 
 def _alt(card):
@@ -80,11 +104,19 @@ def _alt(card):
 
 
 def _source_tb():
-    """Clickable source line, no hashtags — keeps the pinned thread clean."""
+    """Clickable source line, no hashtags — keeps the pinned thread clean.
+    Walks the domains in the order they appear so the facets stay in step with
+    the text however SOURCE_LINE is reordered."""
     tb = client_utils.TextBuilder()
-    i = SOURCE_LINE.find(SOURCE_DOMAIN)
-    tb.text(SOURCE_LINE[:i]).link(SOURCE_DOMAIN, SOURCE_URL)
-    tb.text(SOURCE_LINE[i + len(SOURCE_DOMAIN):])
+    hits = sorted((SOURCE_LINE.find(dom), dom, url) for dom, url in SOURCE_DOMAINS
+                  if SOURCE_LINE.find(dom) != -1)
+    pos = 0
+    for i, dom, url in hits:
+        if i < pos:  # a later domain nested inside an earlier match — skip
+            continue
+        tb.text(SOURCE_LINE[pos:i]).link(dom, url)
+        pos = i + len(dom)
+    tb.text(SOURCE_LINE[pos:])
     return tb
 
 
@@ -104,7 +136,8 @@ def main():
     print('Methodology thread plan:')
     for card, (path, size) in zip(CARDS, rendered):
         print(f'  [{card["lang"]}] {card["emoji"]} {card["heading"]} — {size}  {path}')
-    print(f'  [reply] {_source_tb().build_text()!r} (data.seoul.go.kr clickable)')
+    clickable = ', '.join(dom for dom, _ in SOURCE_DOMAINS)
+    print(f'  [reply] {_source_tb().build_text()!r} (clickable: {clickable})')
 
     if DRY_RUN:
         print('\n(dry run — rendered cards, not posting)')
@@ -134,7 +167,7 @@ def main():
             root_ref = prev_ref
     # Trailing clickable source reply.
     bsky.send_post(text=_source_tb(), reply_to=_reply(prev_ref, root_ref))
-    print('\nPosted methodology thread (4 cards + source reply).')
+    print(f'\nPosted methodology thread ({len(CARDS)} cards + source reply).')
 
     if PIN:
         pin_post(bsky, root_ref)
