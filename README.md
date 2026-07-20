@@ -23,7 +23,7 @@ Each index is rendered to a PNG by `seoul_index_card.py`: the card is laid out i
 
 ## Data sources
 
-- **[Seoul Open Data](https://data.seoul.go.kr)** (CC-BY): live crowd estimates (KT mobile-signal based, disclosed as estimates), air quality, subway and bus boardings, infrastructure counts, and quarterly commercial-district sales.
+- **[Seoul Open Data](https://data.seoul.go.kr)** (CC-BY): live crowd estimates (KT mobile-signal based, disclosed as estimates), air quality, subway and bus boardings, infrastructure counts, and quarterly commercial-district sales. Average-bill lines are sales divided by the number of transactions, so they are what one payment came to, not what one person spent: a restaurant bill covers a shared table.
 - **[KOSIS / Statistics Korea](https://kosis.kr)**: national-contrast lines (Seoul's share of the country's population, and the total-fertility-rate gap). Annual figures, credited on their own source line.
 
 Every post hyperlinks its source.

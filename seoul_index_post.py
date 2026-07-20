@@ -87,7 +87,11 @@ OPENERS = [
     ('The city, as it stands', '지금 이 도시는'),
     ('Last quarter in Seoul', '지난 분기의 서울'),
     ('Spent last quarter in Seoul', '지난 분기 서울의 지출'),
-    ('Average spend per visit in Seoul', '서울, 1회 평균 지출'),
+    # "Average bill", not "per visit": the figure is sales / number of
+    # TRANSACTIONS, so one Korean-restaurant line is a shared table, not one
+    # diner. "Per visit" invited the reader to compare it with a coffee, which
+    # really is one person paying for themselves.
+    ('Average bill in Seoul', '서울의 평균 결제액'),
     ("20-somethings in Seoul's crowds, right now", '지금 서울 인파의 20대'),
     ('Seoul on the move', '움직이는 서울'),
     ('From the city’s data', '서울시 데이터에서'),
@@ -508,7 +512,7 @@ Rules:
 - Do NOT worry about line order: when the lines share a unit (e.g. an all-₩ post) they are automatically sorted by value, largest first. A near-equal "dead heat" still lands because near-equal values end up next to each other. Just choose a coherent set.
 - Each line is a bare "Label: value". Do NOT repeat a shared verb or metric on every line — put it once in the opener. For spending posts (₩ amounts), pick an opener that carries the verb, e.g. "Spent last quarter in Seoul", so lines read "Coffee shops: ₩651.4bn", never "Spent at coffee shops: ...". This matters for live "right now" lines too: the pool labels repeat the whole phrase ("Estimated crowd in Jamsil right now"), and a post that copies them four times reads like a form. Name the metric on ONE line and leave the others bare ("Estimated crowd in Jamsil", then "Hongdae", "Gangnam Station"), and let the opener carry the time frame.
 - Wording shared by EVERY line is trimmed automatically after you answer, so a label you leave repetitive will be cut back rather than posted as-is. Write the labels you want and do not pad them to match each other.
-- Some ₩ lines are per-VISIT averages (category "avgbill"), not quarterly totals. For those use an average-spend opener like "Average spend per visit in Seoul" (never the "Spent last quarter" one), and never mix avgbill lines with quarterly-total spending lines in one post.
+- Some ₩ lines are average BILLS (category "avgbill"), not quarterly totals: sales divided by the number of transactions, i.e. what one payment came to. One bill is not one person — a Korean-restaurant bill covers a shared table, while a coffee is one person paying for themselves. So use an average-bill opener like "Average bill in Seoul" (never the "Spent last quarter" one, and never wording like "per visit" or "per person", which would claim a per-head figure the data does not give). Never mix avgbill lines with quarterly-total spending lines in one post.
 - For age-group crowd posts, write the age band as a numeral: "20-somethings" (never "Twentysomethings"). Opener e.g. "20-somethings in Seoul's crowds, right now"; lines are bare place names.
 - Do not mix unrelated live "right now" lines with quarterly spending lines in a way that breaks a single frame, unless the contrast itself is the point.
 - "national" lines (Seoul set against the whole country: its share of the population, the fertility-rate gap) are annual figures from a different source. Build them into their own "Seoul and the nation" post — never mix a national line with a live "right now" line or a spending line. The fertility pair is only two lines, so pair it with the population-share line to make a set of three.
