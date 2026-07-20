@@ -15,3 +15,6 @@ __pycache__/
 
 # macOS
 .DS_Store
+
+# Accumulated crowd readings (cannot be re-fetched, but local to each machine)
+crowd_history.jsonl
