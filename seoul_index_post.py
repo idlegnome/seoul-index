@@ -1211,10 +1211,12 @@ def compose(sel, pool):
         yr = f', {"/".join(years)}' if years else ''
         src_en += f' · Statistics Korea{yr}'
         src_ko += f' · 통계청{yr}'
+    metro_en = metro_ko = ''
     if uses_oecd:
-        # Name the metric and the year here rather than trusting the opener, and
-        # flag that these are whole metro areas — Seoul's FUA is the capital
-        # region, several times the city the other lines describe.
+        # Name the metric here rather than trusting the opener. The metro-area
+        # scope and the year are NOT put here: they qualify the numbers rather
+        # than crediting them, so they belong on the card beside the figures
+        # (see the footnote below), by the same reasoning as the crowd caveat.
         wf = [by_id[p['id']] for p in picks if by_id[p['id']]['cat'] == 'world']
         keys = sorted({f['id'].split('_')[1] for f in wf})
         years = sorted({f['year'] for f in wf if f.get('year')})
@@ -1223,8 +1225,10 @@ def compose(sel, pool):
         yr = f', {"/".join(years)}' if years else ''
         # No bare "OECD" here: the domain already carries it, and the pinned
         # methodology card is where the publisher gets named in full.
-        src_en += ' · ' + ', '.join(([met_en] if met_en else []) + [f'metro areas{yr}'])
-        src_ko += ' · ' + ', '.join(([met_ko] if met_ko else []) + [f'광역도시권{yr}'])
+        if met_en:
+            src_en += f' · {met_en}'
+            src_ko += f' · {met_ko}'
+        metro_en, metro_ko = f'Metro areas{yr}', f'광역도시권{yr}'
     if estimated:
         src_en += ' · crowds KT-estimated'
         src_ko += ' · 인구는 KT 추정'
@@ -1239,6 +1243,13 @@ def compose(sel, pool):
     else:
         note_en = 'Crowds are KT-estimated' if estimated else ''
         note_ko = '인구는 KT 추정' if estimated else ''
+    # The metro-area scope reads as a key to the figures above it, so it goes
+    # under the last line of the card. A world pair cannot also be a crowd pair,
+    # so in practice this is the only footnote on a world card, but they are
+    # joined rather than assigned in case that ever stops being true.
+    if metro_en:
+        note_en = ' · '.join([p for p in (note_en, metro_en) if p])
+        note_ko = ' · '.join([p for p in (note_ko, metro_ko) if p])
 
     cat_list = [by_id[p['id']]['cat'] for p in picks]
     primary = max(set(cat_list), key=cat_list.count)
