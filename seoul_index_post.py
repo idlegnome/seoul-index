@@ -451,9 +451,13 @@ def spotlight_sel(spot, facts):
     # The source reply also points at the place itself, so a reader who does not
     # know Jamsil can go and find out. Anchor text is the name the card used;
     # the article behind it may be titled differently (Jamsil-dong).
+    # The heading capitalises ("The Gangseo riverbank, hour by hour"), but the
+    # link sits mid-sentence, where a leading article reads as a mistake either
+    # capitalised or not — so the anchor drops it.
+    anchor_en = en[4:] if en.startswith('the ') else place_en
     wiki = {}
     if spot.get('wiki_en'):
-        wiki['wiki_en'] = (' · Wikipedia: ', place_en, spot['wiki_en'])
+        wiki['wiki_en'] = (' · Wikipedia: ', anchor_en, spot['wiki_en'])
     if spot.get('wiki_ko'):
         wiki['wiki_ko'] = (' · 위키백과: ', ko, spot['wiki_ko'])
     return {
