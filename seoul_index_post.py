@@ -741,8 +741,8 @@ def kosis_facts(kosis_key):
 # of source a Seoul-vs-other-cities line can honestly be built on. A FUA is the
 # built-up core plus its commuting belt, so KOR01F is the whole Seoul capital
 # region (~24m people), NOT the 9.6m of Seoul city that the KOSIS lines use.
-# Every world label therefore says "metro area" and compose() puts the metric,
-# the FUA caveat and the year on the source line.
+# compose() therefore puts the metric, the FUA caveat and the year on the
+# source line of every comparison post.
 #
 # No API key. CSV comes back with one row per (city, measure, year); the key is
 # positional, so a dataflow needs exactly as many dots as it has dimensions
@@ -857,8 +857,13 @@ def world_facts():
                 continue
             for code, v in vals.items():
                 value = fmt(v)
+                # Bare city name: dedupe_labels() strips a shared trailing run
+                # from all but the FIRST label, so "... metro area" on every line
+                # would survive only on line one and read as though that city
+                # alone were a metro figure. The caveat rides on the source line,
+                # which compose() always writes, and on the pinned card.
                 out.append(fact(f'world_{key}_{code}', 'world',
-                                f'{names[code]} metro area', value, value,
+                                names[code], value, value,
                                 pair=f'city_{key}', year=year))
         except (RuntimeError, KeyError, IndexError, ValueError):
             continue
