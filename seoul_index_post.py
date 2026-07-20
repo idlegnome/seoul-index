@@ -1229,9 +1229,11 @@ def compose(sel, pool):
             src_en += f' · {met_en}'
             src_ko += f' · {met_ko}'
         metro_en, metro_ko = f'Metro areas{yr}', f'광역도시권{yr}'
-    if estimated:
-        src_en += ' · crowds KT-estimated'
-        src_ko += ' · 인구는 KT 추정'
+    # NOTE: the KT-estimate caveat is deliberately NOT added to the source line.
+    # It is a caveat, not a credit, and it already rides on the card footnote
+    # below; putting it in both made the reply repeat what the card had just
+    # said, one post above it. Anything that appears in the footnote should be
+    # left off the source reply for the same reason.
     # How the crowd figures are arrived at is a caveat on the numbers themselves,
     # not a credit, so it rides on the card beside them rather than in the source
     # reply. It carries no link, so nothing is lost by taking it off the reply.
