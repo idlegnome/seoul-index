@@ -1,6 +1,6 @@
 # Seoul Index
 
-The source code behind **Seoul Index (숫자로 보는 서울)**, [**@seoul-index.bsky.social**](https://bsky.app/profile/seoul-index.bsky.social), a Bluesky bot. Each post is a short set of real statistics drawn from Seoul Open Data, rendered as a card image. A post goes out as a four-post thread: an English card, then a Korean one, each followed by a short reply carrying the clickable source and tags.
+The source code behind **Seoul Index (숫자로 보는 서울)**, [**@seoul-index.bsky.social**](https://bsky.app/profile/seoul-index.bsky.social), a Bluesky bot. Each post is a short set of real statistics, mostly from Seoul Open Data and otherwise from Statistics Korea or the OECD, rendered as a card image. A post goes out as a four-post thread: an English card, then a Korean one, each followed by a short reply carrying the clickable source and tags.
 
 The account is written by A.I. and says so in its profile. This repository is published for transparency: The code here is exactly what composes and sends the posts.
 
