@@ -68,18 +68,36 @@ RECENT_CATS_KEEP = 2
 
 # Curated live-crowd locations (citydata_ppltn AREA_NM, all verified to resolve).
 # A mix of packed / quiet / touristy / young so contrasts are available.
-# (query name, English name, short Korean name). The query name is the API's own
-# AREA_NM and often carries an administrative suffix (관광특구, "special tourist
-# zone") that nobody says out loud, so the third field is what a card calls the
-# place in Korean.
+# 'area' is the API's own AREA_NM, which often carries an administrative suffix
+# (관광특구, "special tourist zone") that nobody says out loud, so 'en' and 'ko'
+# are what a card calls the place. 'wiki_en'/'wiki_ko' are the article a
+# spotlight card links to on its source line — every one of them checked against
+# the Wikipedia API rather than assembled from a title that looks plausible,
+# because a URL that 404s is a wrong fact like any other. Korean articles are
+# not always the mirror of the English one (there is no ko article for the
+# Gangseo riverbank, for instance), so the two are resolved independently.
 CROWD_SPOTS = [
-    ('잠실 관광특구', 'Jamsil', '잠실'),
-    ('홍대 관광특구', 'Hongdae', '홍대'),
-    ('강남역', 'Gangnam Station', '강남역'),
-    ('광화문·덕수궁', 'Gwanghwamun', '광화문'),
-    ('여의도한강공원', 'the Yeouido riverbank', '여의도 한강공원'),
-    ('명동 관광특구', 'Myeongdong', '명동'),
-    ('이태원 관광특구', 'Itaewon', '이태원'),
+    {'area': '잠실 관광특구', 'en': 'Jamsil', 'ko': '잠실',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Jamsil-dong',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%EC%9E%A0%EC%8B%A4%EB%8F%99'},
+    {'area': '홍대 관광특구', 'en': 'Hongdae', 'ko': '홍대',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Hongdae_(area)',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%ED%99%8D%EB%8C%80_%28%EC%A7%80%EC%97%AD%29'},
+    {'area': '강남역', 'en': 'Gangnam Station', 'ko': '강남역',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Gangnam_station',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%EA%B0%95%EB%82%A8%EC%97%AD'},
+    {'area': '광화문·덕수궁', 'en': 'Gwanghwamun', 'ko': '광화문',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Gwanghwamun',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%EA%B4%91%ED%99%94%EB%AC%B8'},
+    {'area': '여의도한강공원', 'en': 'the Yeouido riverbank', 'ko': '여의도 한강공원',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Yeouido',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%EC%97%AC%EC%9D%98%EB%8F%84'},
+    {'area': '명동 관광특구', 'en': 'Myeongdong', 'ko': '명동',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Myeong-dong',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%EB%AA%85%EB%8F%99'},
+    {'area': '이태원 관광특구', 'en': 'Itaewon', 'ko': '이태원',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Itaewon-dong',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%EC%9D%B4%ED%83%9C%EC%9B%90%EB%8F%99'},
 ]
 
 # One post in every SPOTLIGHT_EVERY drills into a single place instead of
@@ -191,7 +209,8 @@ def crowd_facts(api_key):
     """Live crowd estimates for the curated spots + a fullest/quietest contrast."""
     base = f'http://openapi.seoul.go.kr:8088/{api_key}/json/citydata_ppltn'
     got = []
-    for area, en, _ko in CROWD_SPOTS:
+    for spot in CROWD_SPOTS:
+        area, en = spot['area'], spot['en']
         try:
             d = http_get_json(f'{base}/1/1/{_url(area)}')
             r = d['SeoulRtd.citydata_ppltn'][0]
@@ -282,7 +301,7 @@ def spotlight_facts(api_key, spot):
 
     Returns facts in reading order (compose keeps it), or [] if the place did
     not answer well enough for a card."""
-    area, en, ko = spot
+    area, en = spot['area'], spot['en']
     try:
         d = http_get_json(
             f'http://openapi.seoul.go.kr:8088/{api_key}/json/citydata_ppltn/1/1/{_url(area)}')
@@ -347,8 +366,16 @@ def spotlight_sel(spot, facts):
     reworded or re-translated. So build its answer in Python instead of asking,
     which also spares a claude -p call. The opener names the place in each
     language from CROWD_SPOTS, so nothing needs translating at all."""
-    _, en, ko = spot
+    en, ko = spot['en'], spot['ko']
     place_en = en[0].upper() + en[1:]
+    # The source reply also points at the place itself, so a reader who does not
+    # know Jamsil can go and find out. Anchor text is the name the card used;
+    # the article behind it may be titled differently (Jamsil-dong).
+    wiki = {}
+    if spot.get('wiki_en'):
+        wiki['wiki_en'] = (' · Wikipedia: ', place_en, spot['wiki_en'])
+    if spot.get('wiki_ko'):
+        wiki['wiki_ko'] = (' · 위키백과: ', ko, spot['wiki_ko'])
     return {
         'opener_en': f'{place_en}, hour by hour',
         'opener_ko': f'{ko}, 시간대별',
@@ -356,6 +383,7 @@ def spotlight_sel(spot, facts):
         'note': f'single-place spotlight: {en}',
         'picks': [{'id': f['id'], 'label_en': f['label_en'],
                    'label_ko': f['label_ko'], 'emoji': ''} for f in facts],
+        **wiki,
     }
 
 
@@ -959,17 +987,25 @@ def compose(sel, pool):
         return f'{emoji} {label}: {value}' if emoji else f'{label}: {value}'
     op_en = f'{opener_emoji} {opener_en}' if opener_emoji else opener_en
     op_ko = f'{opener_emoji} {opener_ko}' if opener_emoji else opener_ko
+    # The trailing Wikipedia link is a real link in the posted reply, so it stays
+    # out of src_* (which add_tags renders as text) and is spelled out only in
+    # the plaintext body that serves as alt text and as the fallback post.
+    wiki_en, wiki_ko = sel.get('wiki_en'), sel.get('wiki_ko')
+    tail_en = f'{wiki_en[0]}{wiki_en[1]}' if wiki_en else ''
+    tail_ko = f'{wiki_ko[0]}{wiki_ko[1]}' if wiki_ko else ''
+
     en_body = op_en + ':\n' + '\n'.join(
         _pl(l['emoji'], l['label_en'], l['value_en']) for l in lines) + (
-        f'\n{note_en}' if note_en else '') + '\n' + src_en
+        f'\n{note_en}' if note_en else '') + '\n' + src_en + tail_en
     ko_body = op_ko + ':\n' + '\n'.join(
         _pl(l['emoji'], l['label_ko'], l['value_ko']) for l in lines) + (
-        f'\n{note_ko}' if note_ko else '') + '\n' + src_ko
+        f'\n{note_ko}' if note_ko else '') + '\n' + src_ko + tail_ko
 
     return {
         'opener': {'emoji': opener_emoji, 'en': opener_en, 'ko': opener_ko},
         'lines': lines, 'src_en': src_en, 'src_ko': src_ko,
         'note_en': note_en, 'note_ko': note_ko,
+        'wiki_en': wiki_en, 'wiki_ko': wiki_ko,
         'en_body': en_body, 'ko_body': ko_body,
         'used': used, 'cats': list(cats), 'primary': primary,
     }
@@ -979,7 +1015,10 @@ LINK_DOMAINS = [('data.seoul.go.kr', 'https://data.seoul.go.kr'),
                 ('kosis.kr', 'https://kosis.kr')]
 
 
-def add_tags(tb, body):
+def add_tags(tb, body, extra=None):
+    """Build the source reply: the body with its source domains hyperlinked,
+    then an optional trailing link (prefix, anchor, url) — used by spotlight
+    cards to point at the place's Wikipedia article — then the hashtags."""
     # Hyperlink every source domain that appears on the source line.
     hits = sorted((body.find(dom), dom, url) for dom, url in LINK_DOMAINS
                   if body.find(dom) != -1)
@@ -990,6 +1029,10 @@ def add_tags(tb, body):
         tb.text(body[pos:i]).link(dom, url)
         pos = i + len(dom)
     tb.text(body[pos:])
+    if extra:
+        prefix, anchor, url = extra
+        tb.text(prefix)
+        tb.link(anchor, url)
     if TAGS:
         tb.text('\n')
         for i, (tag, label) in enumerate(TAGS):
@@ -1041,11 +1084,11 @@ def main():
         facts = spotlight_facts(api_key, spot)
         if facts:
             state['spotlight_i'] = (i + 1) % len(CROWD_SPOTS)
-            print(f'Spotlight post #{post_n}: {spot[1]} ({len(facts)} lines, '
+            print(f'Spotlight post #{post_n}: {spot["en"]} ({len(facts)} lines, '
                   f'no selector call).')
             sel, pool = spotlight_sel(spot, facts), facts
         else:
-            print(f'Spotlight on {spot[1]} returned too little; normal index instead.')
+            print(f'Spotlight on {spot["en"]} returned too little; normal index instead.')
             want_spotlight = False
 
     if not want_spotlight:
@@ -1069,8 +1112,8 @@ def main():
     # top of its post; the source line + hashtags follow as their own threaded
     # reply, which keeps data.seoul.go.kr a real clickable link. The full
     # plaintext body is the card's alt text, and the whole post if rendering fails.
-    en_source = add_tags(client_utils.TextBuilder(), c['src_en'])
-    ko_source = add_tags(client_utils.TextBuilder(), c['src_ko'])
+    en_source = add_tags(client_utils.TextBuilder(), c['src_en'], c.get('wiki_en'))
+    ko_source = add_tags(client_utils.TextBuilder(), c['src_ko'], c.get('wiki_ko'))
     en_alt, ko_alt = c['en_body'], c['ko_body']
 
     print(f'\nNote: {sel.get("note", "")}')
@@ -1133,8 +1176,8 @@ def main():
         bsky.send_post(text=ko_source, reply_to=_reply(p3_ref, root_ref), langs=['ko'])
         print('\nPosted (4-post thread: EN card, EN source, KO card, KO source).')
     else:
-        en_full = add_tags(client_utils.TextBuilder(), c['en_body'])
-        ko_full = add_tags(client_utils.TextBuilder(), c['ko_body'])
+        en_full = add_tags(client_utils.TextBuilder(), c['en_body'], c.get('wiki_en'))
+        ko_full = add_tags(client_utils.TextBuilder(), c['ko_body'], c.get('wiki_ko'))
         root = bsky.send_post(text=en_full, langs=['en'])
         root_ref = models.create_strong_ref(root)
         reply_ref = models.AppBskyFeedPost.ReplyRef(parent=root_ref, root=root_ref)
