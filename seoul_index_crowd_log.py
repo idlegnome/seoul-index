@@ -8,14 +8,20 @@ and a 12-hour forecast, and nothing at all about the past. So a line like
 accumulated. This script is that accumulation: run hourly by launchd, it takes
 one reading per curated spot and appends it to crowd_history.jsonl.
 
+Hourly from 05:00 to 23:00, not round the clock. Overnight readings are the
+least informative (the curves are flat and the bot never posts then), and
+skipping them keeps even the monthly sales-scan day inside the only daily call
+limit Seoul publishes. The cost is that a spotlight card run between midnight
+and 5 a.m. has no baseline to show, which it handles by omitting the line.
+
 Only OBSERVED readings are logged. The forecast is deliberately discarded: a
 baseline built from predictions would be a baseline of what the model expected,
 not of what happened, and the whole point of the log is to escape the forecast
 caveat.
 
 The file is append-only JSONL, one reading per line, so a truncated write can
-only ever cost the last line. At 7 spots x 24 hours it grows by ~60k lines a
-year (a few MB) — small enough that pruning is not worth the risk of throwing
+only ever cost the last line. At 26 spots x 19 hours it grows by ~180k lines a
+year (some tens of MB) — small enough that pruning is not worth the risk of throwing
 away history we cannot re-fetch.
 
 Usage:

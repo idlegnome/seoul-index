@@ -43,8 +43,8 @@ Every post hyperlinks its source.
 | `seoul_index_post.py` | Harvest, select, compose, render and post one index (English + Korean card thread). |
 | `seoul_index_card.py` | Render an index or prose card to a PNG (headless Chrome, cropped with Pillow); the poster falls back to plaintext if it fails. |
 | `seoul_index_methodology.py` | Post the pinned methodology / "about" thread as prose cards. |
-| `seoul_index_sales.py` | Weekly full scan of the commercial-district sales dataset into `sales_agg.json` (the poster reads this cheaply). |
-| `seoul_index_crowd_log.py` | Hourly crowd sampler; appends observed readings to `crowd_history.jsonl` so the bot can say what a place is *usually* like. |
+| `seoul_index_sales.py` | Monthly full scan of the commercial-district sales dataset into `sales_agg.json` (the poster reads this cheaply). |
+| `seoul_index_crowd_log.py` | Crowd sampler, hourly from 05:00 to 23:00; appends observed readings to `crowd_history.jsonl` so the bot can say what a place is *usually* like. |
 | `seoul_index_config.example.json` | Template for the gitignored `seoul_index_config.json`. |
 | `seoul_index_avatar.svg` | The account avatar. |
 
@@ -85,7 +85,7 @@ python3 seoul_index_post.py --dry-run   # harvest, select, compose and print, no
 python3 seoul_index_post.py             # post one index (English + Korean card thread)
 ```
 
-The live account posts twice a day (12:30 p.m. and 8:30 p.m. KST) via `launchd`, with the sales scan refreshing weekly and the crowd sampler running hourly.
+The live account posts twice a day (12:30 p.m. and 8:30 p.m. KST) via `launchd`, with the crowd sampler running hourly from 05:00 to 23:00 and the sales scan monthly (the sales data is quarterly, so a weekly scan was recomputing a figure that moves four times a year).
 
 ## Licence
 

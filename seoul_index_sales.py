@@ -6,7 +6,10 @@ The Seoul Open Data sales dataset (VwsmTrdarSelngQq — 상권 추정매출) has
 and is NOT ordered by quarter (it interleaves by district), so the only honest way
 to total a quarter by industry is a full scan. That is slow (~460 API calls, a few
 minutes), and the underlying data only changes quarterly, so this runs on its own
-weekly launchd schedule and writes sales_agg.json for the poster to read cheaply.
+MONTHLY launchd schedule (3rd at 05:00) and writes sales_agg.json for the poster
+to read cheaply. It was weekly until 20 July 2026; a weekly full scan spent ~460
+calls recomputing a figure that moves four times a year, and collided with the
+hourly crowd sampler's daily budget.
 
 Output (sales_agg.json):
   {

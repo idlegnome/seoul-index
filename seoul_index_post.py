@@ -18,7 +18,7 @@ Design principle — accuracy over wit:
 Freshness:
   Live facts (crowds, air) are pulled at post time. Daily facts (subway/bus) are
   computed at post time but cached per-day in state so the second daily post is
-  cheap. Quarterly sales come from sales_agg.json (refreshed weekly by
+  cheap. Quarterly sales come from sales_agg.json (refreshed monthly by
   seoul_index_sales.py).
 
 Requires (for actual posting, not --dry-run):
@@ -82,7 +82,7 @@ CROWD_SPOTS = [
      'wiki_ko': 'https://ko.wikipedia.org/wiki/%EC%9E%A0%EC%8B%A4%EB%8F%99'},
     {'area': '홍대 관광특구', 'en': 'Hongdae', 'ko': '홍대',
      'wiki_en': 'https://en.wikipedia.org/wiki/Hongdae_(area)',
-     'wiki_ko': 'https://ko.wikipedia.org/wiki/%ED%99%8D%EB%8C%80_%28%EC%A7%80%EC%97%AD%29'},
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%ED%99%8D%EB%8C%80_(%EC%A7%80%EC%97%AD)'},
     {'area': '강남역', 'en': 'Gangnam Station', 'ko': '강남역',
      'wiki_en': 'https://en.wikipedia.org/wiki/Gangnam_station',
      'wiki_ko': 'https://ko.wikipedia.org/wiki/%EA%B0%95%EB%82%A8%EC%97%AD'},
@@ -98,6 +98,63 @@ CROWD_SPOTS = [
     {'area': '이태원 관광특구', 'en': 'Itaewon', 'ko': '이태원',
      'wiki_en': 'https://en.wikipedia.org/wiki/Itaewon-dong',
      'wiki_ko': 'https://ko.wikipedia.org/wiki/%EC%9D%B4%ED%83%9C%EC%9B%90%EB%8F%99'},
+    {'area': '경복궁', 'en': 'Gyeongbokgung', 'ko': '경복궁',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Gyeongbokgung',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%EA%B2%BD%EB%B3%B5%EA%B6%81'},
+    {'area': '북촌한옥마을', 'en': 'Bukchon Hanok Village', 'ko': '북촌한옥마을',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Bukchon_Hanok_Village',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%EB%B6%81%EC%B4%8C_%ED%95%9C%EC%98%A5%EB%A7%88%EC%9D%84'},
+    {'area': '인사동', 'en': 'Insadong', 'ko': '인사동',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Insa-dong',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%EC%9D%B8%EC%82%AC%EB%8F%99'},
+    {'area': '광장(전통)시장', 'en': 'Gwangjang Market', 'ko': '광장시장',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Gwangjang_Market',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%EA%B4%91%EC%9E%A5%EC%8B%9C%EC%9E%A5'},
+    {'area': '남대문시장', 'en': 'Namdaemun Market', 'ko': '남대문시장',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Namdaemun_Market',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%EB%82%A8%EB%8C%80%EB%AC%B8%EC%8B%9C%EC%9E%A5'},
+    {'area': '서울역', 'en': 'Seoul Station', 'ko': '서울역',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Seoul_Station',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%EC%84%9C%EC%9A%B8%EC%97%AD'},
+    {'area': '고속터미널역', 'en': 'the Express Bus Terminal', 'ko': '고속터미널역',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Express_Bus_Terminal_station',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%EA%B3%A0%EC%86%8D%ED%84%B0%EB%AF%B8%EB%84%90%EC%97%AD'},
+    {'area': '김포공항', 'en': 'Gimpo Airport', 'ko': '김포공항',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Gimpo_International_Airport',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%EA%B9%80%ED%8F%AC%EA%B5%AD%EC%A0%9C%EA%B3%B5%ED%95%AD'},
+    {'area': '가산디지털단지역', 'en': 'Gasan Digital Complex', 'ko': '가산디지털단지역',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Gasan_Digital_Complex_station',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%EA%B0%80%EC%82%B0%EB%94%94%EC%A7%80%ED%84%B8%EB%8B%A8%EC%A7%80%EC%97%AD'},
+    {'area': '신림역', 'en': 'Sillim Station', 'ko': '신림역',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Sillim_station',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%EC%8B%A0%EB%A6%BC%EC%97%AD'},
+    {'area': '사당역', 'en': 'Sadang Station', 'ko': '사당역',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Sadang_station',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%EC%82%AC%EB%8B%B9%EC%97%AD'},
+    {'area': '성수카페거리', 'en': 'the Seongsu cafe strip', 'ko': '성수카페거리',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Seongsu-dong',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%EC%84%B1%EC%88%98%EB%8F%99'},
+    {'area': '연남동', 'en': 'Yeonnam-dong', 'ko': '연남동',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Yeonnam-dong',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%EC%97%B0%EB%82%A8%EB%8F%99'},
+    {'area': '해방촌·경리단길', 'en': 'Haebangchon', 'ko': '해방촌',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Haebangchon',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%ED%95%B4%EB%B0%A9%EC%B4%8C'},
+    {'area': '남산공원', 'en': 'Namsan Park', 'ko': '남산공원',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Namsan',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%EB%82%A8%EC%82%B0_(%EC%84%9C%EC%9A%B8)'},
+    {'area': '서울숲공원', 'en': 'Seoul Forest', 'ko': '서울숲',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Seoul_Forest',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%EC%84%9C%EC%9A%B8%EC%88%B2'},
+    {'area': '노들섬', 'en': 'Nodeul Island', 'ko': '노들섬',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Nodeulseom',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%EB%85%B8%EB%93%A4%EC%84%AC'},
+    {'area': '강서한강공원', 'en': 'the Gangseo riverbank', 'ko': '강서한강공원',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Gangseo_District,_Seoul',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%EA%B0%95%EC%84%9C%EA%B5%AC_(%EC%84%9C%EC%9A%B8%ED%8A%B9%EB%B3%84%EC%8B%9C)'},
+    {'area': '잠실롯데타워·석촌호수', 'en': 'Lotte World Tower', 'ko': '롯데월드타워',
+     'wiki_en': 'https://en.wikipedia.org/wiki/Lotte_World_Tower',
+     'wiki_ko': 'https://ko.wikipedia.org/wiki/%EB%A1%AF%EB%8D%B0%EC%9B%94%EB%93%9C%ED%83%80%EC%9B%8C'},
 ]
 
 # One post in every SPOTLIGHT_EVERY drills into a single place instead of
@@ -205,11 +262,34 @@ def fact(fid, cat, label_en, value_en, value_ko, estimated=False, pair=None,
 
 # --- harvesters ------------------------------------------------------------
 
-def crowd_facts(api_key):
-    """Live crowd estimates for the curated spots + a fullest/quietest contrast."""
+CROWD_WINDOW = 10   # places an index card considers per post (see crowd_window)
+CROWD_STRIDE = 7    # coprime with len(CROWD_SPOTS), so the walk covers them all
+
+
+def crowd_window(state):
+    """The places this index card will consider, as a rotating sample.
+
+    All of CROWD_SPOTS is sampled hourly for the history log, but offering every
+    one to the selector would cost an API call each for lines only three or four
+    of which can be used, and would swell the prompt enough to slow the selector
+    noticeably. A window keeps that cost flat while the mix changes every post.
+
+    It STRIDES through the list rather than taking a contiguous slice, because
+    the list is grouped by kind of place: a slice would hand the selector ten
+    palaces one post and ten subway stations the next, when the contrast between
+    a packed station and an empty riverbank is the whole point. A stride coprime
+    with the list length visits every place equally often."""
+    i, n = int(state.get('crowd_i', 0)), len(CROWD_SPOTS)
+    state['crowd_i'] = (i + 1) % n
+    return [CROWD_SPOTS[(i + k * CROWD_STRIDE) % n] for k in range(min(CROWD_WINDOW, n))]
+
+
+def crowd_facts(api_key, spots=None):
+    """Live crowd estimates for the given spots + a fullest/quietest contrast."""
+    spots = CROWD_SPOTS if spots is None else spots
     base = f'http://openapi.seoul.go.kr:8088/{api_key}/json/citydata_ppltn'
     got = []
-    for spot in CROWD_SPOTS:
+    for spot in spots:
         area, en = spot['area'], spot['en']
         try:
             d = http_get_json(f'{base}/1/1/{_url(area)}')
@@ -648,8 +728,8 @@ def kosis_facts(kosis_key):
 
 def build_pool(api_key, state, kosis_key=None):
     pool = []
-    for fn in (crowd_facts, air_facts):
-        pool += fn(api_key)
+    pool += crowd_facts(api_key, crowd_window(state))
+    pool += air_facts(api_key)
     pool += transport_facts(api_key, state)
     pool += count_facts(api_key)
     pool += sales_facts()
