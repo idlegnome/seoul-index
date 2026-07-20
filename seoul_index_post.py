@@ -163,6 +163,13 @@ CROWD_SPOTS = [
 # setting places against each other.
 SPOTLIGHT_EVERY = 3
 
+# The world vein is a quarter of the pool and holds the widest gaps in it
+# (Seoul's density is 4x Amsterdam's), so the selector reaches for it whenever
+# it is offered. It therefore gets a cooldown the other categories do not need:
+# after a world post, world facts leave the pool entirely until this many days
+# have passed. At two posts a day, 3 days is about one world card in six.
+WORLD_COOLDOWN_DAYS = 3
+
 # Rotating openers offered to the selector (it may also write its own). Kept
 # deliberately neutral — time/place framings, never a punchline. The house style
 # is Harper's: the arrangement carries the joke, the opener never gives it away.
@@ -1353,6 +1360,26 @@ def main():
         if len(pool) < 5:
             sys.exit(f'Pool too small ({len(pool)} facts) — data sources may be down.')
 
+        # World cooldown (see WORLD_COOLDOWN_DAYS). Applied before the rotation
+        # below, so that a world post held back here is dropped from the running
+        # rather than merely deferred to the next post. An unparseable or missing
+        # stamp means no cooldown: the guard should never be the thing that
+        # empties the pool.
+        last_world = state.get('last_world_at')
+        if last_world:
+            try:
+                age = datetime.now(timezone.utc) - datetime.fromisoformat(last_world)
+            except ValueError:
+                age = None
+            if age is not None and age < timedelta(days=WORLD_COOLDOWN_DAYS):
+                cooled = [f for f in pool if f['cat'] != 'world']
+                if len(cooled) >= 5:
+                    hours = int(age.total_seconds() // 3600)
+                    print(f'World on cooldown ({hours}h of '
+                          f'{WORLD_COOLDOWN_DAYS * 24}h) - {len(pool) - len(cooled)} '
+                          f'facts withheld.')
+                    pool = cooled
+
         # Category rotation: don't lead with the same metric two posts running.
         last_cat = state.get('last_cat')
         if last_cat:
@@ -1445,6 +1472,8 @@ def main():
     state['recent_ids'] = recent_ids
     state['last_cat'] = primary
     state['last_success_at'] = datetime.now(timezone.utc).isoformat()
+    if primary == 'world':
+        state['last_world_at'] = state['last_success_at']
     STATE.write_text(json.dumps(state, ensure_ascii=False, indent=2))
 
 
