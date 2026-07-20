@@ -398,9 +398,9 @@ def spotlight_facts(api_key, spot):
     wd = datetime.now(SEOUL_TZ).strftime('%a')
 
     facts = [fact(f'spot_now_{en}', 'spotlight',
-                  f'Right now ({_ampm_en(now_h)})',
+                  f'Estimated crowd right now ({_ampm_en(now_h)})',
                   grouped(now_mid), grouped(now_mid), estimated=True,
-                  label_ko=f'지금 ({_ampm_ko(now_h)})')]
+                  label_ko=f'지금 추정 인구 ({_ampm_ko(now_h)})')]
 
     # Typical for this weekday and hour, from our own observations. Sits second
     # so it lands next to the live figure it gives meaning to.
