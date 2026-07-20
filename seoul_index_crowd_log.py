@@ -43,10 +43,13 @@ STATS = '--stats' in sys.argv
 try:
     from seoul_index_post import CROWD_SPOTS
 except ImportError:                                  # stand alone if need be
-    CROWD_SPOTS = [('잠실 관광특구', 'Jamsil'), ('홍대 관광특구', 'Hongdae'),
-                   ('강남역', 'Gangnam Station'), ('광화문·덕수궁', 'Gwanghwamun'),
-                   ('여의도한강공원', 'the Yeouido riverbank'),
-                   ('명동 관광특구', 'Myeongdong'), ('이태원 관광특구', 'Itaewon')]
+    CROWD_SPOTS = [('잠실 관광특구', 'Jamsil', '잠실'),
+                   ('홍대 관광특구', 'Hongdae', '홍대'),
+                   ('강남역', 'Gangnam Station', '강남역'),
+                   ('광화문·덕수궁', 'Gwanghwamun', '광화문'),
+                   ('여의도한강공원', 'the Yeouido riverbank', '여의도 한강공원'),
+                   ('명동 관광특구', 'Myeongdong', '명동'),
+                   ('이태원 관광특구', 'Itaewon', '이태원')]
 
 
 def http_get_json(url):
@@ -66,7 +69,7 @@ def sample(api_key):
     base = f'http://openapi.seoul.go.kr:8088/{api_key}/json/citydata_ppltn'
     stamp = datetime.now(SEOUL_TZ)
     records, problems = [], []
-    for area, en in CROWD_SPOTS:
+    for area, en, _ko in CROWD_SPOTS:
         try:
             d = http_get_json(f'{base}/1/1/{urllib.parse.quote(area)}')
             # The API reports quota and key problems in RESULT.CODE rather than

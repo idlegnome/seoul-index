@@ -15,6 +15,14 @@ The account is written by A.I. and says so in its profile. This repository is pu
 3. **Compose**: Python stitches the chosen labels back onto its own exact values, adds the source line and tags, and enforces the character limit. Wording that every line repeats is trimmed here, so the index reads like one: the metric is named on the first line and each later line carries only what differs ("Estimated crowd in Jamsil", then "In Hongdae"), and anything the opener already says is dropped from the lines entirely. English trims the leading run and Korean the trailing one, since Korean puts the head last.
 4. **Render and post**: each index is drawn as a card image (the numbers on the card), and the thread goes out as the English card, a reply with its clickable source and tags, the Korean card, then its source reply. Each card's full text is its image alt text.
 
+## Two kinds of card
+
+Most posts set things against each other across the city. Every third post instead drills into **one place read along a clock** — the crowd right now, what that place is usually like at this hour on this weekday, and the busiest and quietest hours ahead — cycling through the curated spots. These are interspersed with the ordinary index cards, not a replacement for them, and a place that does not answer with enough lines falls back to a normal post.
+
+The spotlight card needs no `claude -p` call: its lines are fixed and in order, and their labels carry clock times, which are numbers Python does not hand over to be reworded or translated. Its opener names the place in both languages from the curated list.
+
+It is headed "hour by hour" rather than "today" on purpose. `citydata_ppltn` knows the present and the next 12 hours and nothing else, so the peak and trough are the busiest and quietest hours **ahead**: the morning that already happened is not in the data. The footnote says the later hours are forecasts. The "usual for a Monday at this hour" line is the one figure that escapes that caveat, because it comes from the bot's own logged observations rather than from the forecast — and it simply does not appear until three separate weeks have been recorded.
+
 Category rotation keeps two consecutive posts off the same metric. A topical emoji leads the opener, and per-line emoji are added only where an obvious one fits; a guard rejects any number or keycap emoji so figures stay Python's alone.
 
 ## Card images
@@ -36,6 +44,7 @@ Every post hyperlinks its source.
 | `seoul_index_card.py` | Render an index or prose card to a PNG (headless Chrome, cropped with Pillow); the poster falls back to plaintext if it fails. |
 | `seoul_index_methodology.py` | Post the pinned methodology / "about" thread as prose cards. |
 | `seoul_index_sales.py` | Weekly full scan of the commercial-district sales dataset into `sales_agg.json` (the poster reads this cheaply). |
+| `seoul_index_crowd_log.py` | Hourly crowd sampler; appends observed readings to `crowd_history.jsonl` so the bot can say what a place is *usually* like. |
 | `seoul_index_config.example.json` | Template for the gitignored `seoul_index_config.json`. |
 | `seoul_index_avatar.svg` | The account avatar. |
 
@@ -76,7 +85,7 @@ python3 seoul_index_post.py --dry-run   # harvest, select, compose and print, no
 python3 seoul_index_post.py             # post one index (English + Korean card thread)
 ```
 
-The live account posts twice a day (12:30 p.m. and 8:30 p.m. KST) via `launchd`, with the sales scan refreshing weekly.
+The live account posts twice a day (12:30 p.m. and 8:30 p.m. KST) via `launchd`, with the sales scan refreshing weekly and the crowd sampler running hourly.
 
 ## Licence
 

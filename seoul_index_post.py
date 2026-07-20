@@ -30,7 +30,7 @@ Requires (for actual posting, not --dry-run):
 Usage:
   python3 seoul_index_post.py            # post one index (English -> Korean thread)
   python3 seoul_index_post.py --dry-run  # harvest, select, compose, print — no post
-  python3 seoul_index_post.py --now      # alias for a normal immediate post
+  python3 seoul_index_post.py --spotlight --dry-run   # force the single-place card
 """
 
 import json
@@ -57,6 +57,7 @@ CLAUDE_TOKEN_SERVICE = 'claude-oauth-token'
 CLAUDE_MODEL = 'claude-sonnet-5'  # wit + Korean; easy to change if unavailable
 
 DRY_RUN = '--dry-run' in sys.argv
+FORCE_SPOTLIGHT = '--spotlight' in sys.argv   # for testing the single-place card
 MAX_POST_CHARS = 285  # buffer under Bluesky's 300-grapheme limit
 SEOUL_TZ = ZoneInfo('Asia/Seoul')
 SOURCE_URL = 'https://data.seoul.go.kr/'
@@ -67,15 +68,23 @@ RECENT_CATS_KEEP = 2
 
 # Curated live-crowd locations (citydata_ppltn AREA_NM, all verified to resolve).
 # A mix of packed / quiet / touristy / young so contrasts are available.
+# (query name, English name, short Korean name). The query name is the API's own
+# AREA_NM and often carries an administrative suffix (관광특구, "special tourist
+# zone") that nobody says out loud, so the third field is what a card calls the
+# place in Korean.
 CROWD_SPOTS = [
-    ('잠실 관광특구', 'Jamsil'),
-    ('홍대 관광특구', 'Hongdae'),
-    ('강남역', 'Gangnam Station'),
-    ('광화문·덕수궁', 'Gwanghwamun'),
-    ('여의도한강공원', 'the Yeouido riverbank'),
-    ('명동 관광특구', 'Myeongdong'),
-    ('이태원 관광특구', 'Itaewon'),
+    ('잠실 관광특구', 'Jamsil', '잠실'),
+    ('홍대 관광특구', 'Hongdae', '홍대'),
+    ('강남역', 'Gangnam Station', '강남역'),
+    ('광화문·덕수궁', 'Gwanghwamun', '광화문'),
+    ('여의도한강공원', 'the Yeouido riverbank', '여의도 한강공원'),
+    ('명동 관광특구', 'Myeongdong', '명동'),
+    ('이태원 관광특구', 'Itaewon', '이태원'),
 ]
+
+# One post in every SPOTLIGHT_EVERY drills into a single place instead of
+# setting places against each other.
+SPOTLIGHT_EVERY = 3
 
 # Rotating openers offered to the selector (it may also write its own). Kept
 # deliberately neutral — time/place framings, never a punchline. The house style
@@ -166,9 +175,14 @@ def won_en(amount):
     return f'₩{grouped(amount)}'
 
 
-def fact(fid, cat, label_en, value_en, value_ko, estimated=False, pair=None, year=None):
+def fact(fid, cat, label_en, value_en, value_ko, estimated=False, pair=None,
+         year=None, forecast=False, label_ko=None):
+    """One candidate line. `label_ko` is normally left None so the selector
+    translates the label; spotlight lines set it because their labels carry
+    clock times, and a translated time is a number Python no longer owns."""
     return {'id': fid, 'cat': cat, 'label_en': label_en, 'value_en': value_en,
-            'value_ko': value_ko, 'estimated': estimated, 'pair': pair, 'year': year}
+            'value_ko': value_ko, 'estimated': estimated, 'pair': pair,
+            'year': year, 'forecast': forecast, 'label_ko': label_ko}
 
 
 # --- harvesters ------------------------------------------------------------
@@ -177,7 +191,7 @@ def crowd_facts(api_key):
     """Live crowd estimates for the curated spots + a fullest/quietest contrast."""
     base = f'http://openapi.seoul.go.kr:8088/{api_key}/json/citydata_ppltn'
     got = []
-    for area, en in CROWD_SPOTS:
+    for area, en, _ko in CROWD_SPOTS:
         try:
             d = http_get_json(f'{base}/1/1/{_url(area)}')
             r = d['SeoulRtd.citydata_ppltn'][0]
@@ -230,6 +244,119 @@ def crowd_facts(api_key):
                               f'{g["twenties"]}%', f'{g["twenties"]}%',
                               estimated=True, pair='age_gap'))
     return facts
+
+
+def _ampm_en(h):
+    if h == 0:
+        return 'midnight'
+    if h == 12:
+        return 'noon'
+    return f'{h % 12} {"a.m." if h < 12 else "p.m."}'
+
+
+def _ampm_ko(h):
+    if h == 0:
+        return '자정'
+    if h == 12:
+        return '정오'
+    return f'{"오전" if h < 12 else "오후"} {h % 12}시'
+
+
+WEEKDAY_EN = {'Mon': 'Monday', 'Tue': 'Tuesday', 'Wed': 'Wednesday',
+              'Thu': 'Thursday', 'Fri': 'Friday', 'Sat': 'Saturday',
+              'Sun': 'Sunday'}
+WEEKDAY_KO = {'Mon': '월요일', 'Tue': '화요일', 'Wed': '수요일', 'Thu': '목요일',
+              'Fri': '금요일', 'Sat': '토요일', 'Sun': '일요일'}
+
+
+def spotlight_facts(api_key, spot):
+    """One place, over time, rather than places against each other.
+
+    Everything here comes from a single citydata_ppltn call plus the bot's own
+    accumulated log. The endpoint knows the present and the next 12 hours and
+    nothing else, so the peak and trough lines are the busiest and quietest
+    hours AHEAD, not of the day: the morning that already happened is not in the
+    data, and calling this "today" would claim otherwise. The typical-for-this-
+    weekday line comes from crowd_history.jsonl and simply does not appear until
+    three separate weeks have been observed.
+
+    Returns facts in reading order (compose keeps it), or [] if the place did
+    not answer well enough for a card."""
+    area, en, ko = spot
+    try:
+        d = http_get_json(
+            f'http://openapi.seoul.go.kr:8088/{api_key}/json/citydata_ppltn/1/1/{_url(area)}')
+        r = d['SeoulRtd.citydata_ppltn'][0]
+        now_mid = (int(r['AREA_PPLTN_MIN']) + int(r['AREA_PPLTN_MAX'])) // 2
+    except (RuntimeError, KeyError, IndexError, ValueError):
+        return []
+
+    stamp = r.get('PPLTN_TIME') or ''
+    try:                                   # the reading's own clock, not ours
+        now_h = int(stamp[11:13])
+    except (ValueError, IndexError):
+        now_h = datetime.now(SEOUL_TZ).hour
+    wd = datetime.now(SEOUL_TZ).strftime('%a')
+
+    facts = [fact(f'spot_now_{en}', 'spotlight',
+                  f'Right now ({_ampm_en(now_h)})',
+                  grouped(now_mid), grouped(now_mid), estimated=True,
+                  label_ko=f'지금 ({_ampm_ko(now_h)})')]
+
+    # Typical for this weekday and hour, from our own observations. Sits second
+    # so it lands next to the live figure it gives meaning to.
+    try:
+        from seoul_index_crowd_log import baseline
+        base = baseline(en, wd, now_h)
+    except Exception:                      # no log yet, or unreadable — skip
+        base = None
+    if base:
+        mean, days = base
+        facts.append(fact(f'spot_usual_{en}', 'spotlight',
+                          f'Usual for a {WEEKDAY_EN.get(wd, wd)} at {_ampm_en(now_h)}',
+                          grouped(mean), grouped(mean), estimated=True,
+                          label_ko=f'{WEEKDAY_KO.get(wd, wd)} {_ampm_ko(now_h)} 평균'))
+
+    pts = []
+    for x in (r.get('FCST_PPLTN') or []):
+        try:
+            pts.append((int(x['FCST_TIME'][11:13]),
+                        (int(x['FCST_PPLTN_MIN']) + int(x['FCST_PPLTN_MAX'])) // 2))
+        except (KeyError, ValueError, IndexError):
+            continue
+    if len(pts) >= 2:
+        hi = max(pts, key=lambda p: p[1])
+        lo = min(pts, key=lambda p: p[1])
+        if hi[0] != lo[0]:                 # a flat forecast says nothing
+            facts.append(fact(f'spot_peak_{en}', 'spotlight',
+                              f'Busiest hour ahead ({_ampm_en(hi[0])})',
+                              grouped(hi[1]), grouped(hi[1]),
+                              estimated=True, forecast=True,
+                              label_ko=f'가장 붐빌 시간 ({_ampm_ko(hi[0])})'))
+            facts.append(fact(f'spot_quiet_{en}', 'spotlight',
+                              f'Quietest hour ahead ({_ampm_en(lo[0])})',
+                              grouped(lo[1]), grouped(lo[1]),
+                              estimated=True, forecast=True,
+                              label_ko=f'가장 한산할 시간 ({_ampm_ko(lo[0])})'))
+    return facts if len(facts) >= 3 else []
+
+
+def spotlight_sel(spot, facts):
+    """The selector's job on a spotlight card is already done: the lines are
+    fixed, in order, and their labels carry clock times that must not be
+    reworded or re-translated. So build its answer in Python instead of asking,
+    which also spares a claude -p call. The opener names the place in each
+    language from CROWD_SPOTS, so nothing needs translating at all."""
+    _, en, ko = spot
+    place_en = en[0].upper() + en[1:]
+    return {
+        'opener_en': f'{place_en}, hour by hour',
+        'opener_ko': f'{ko}, 시간대별',
+        'opener_emoji': '📍',
+        'note': f'single-place spotlight: {en}',
+        'picks': [{'id': f['id'], 'label_en': f['label_en'],
+                   'label_ko': f['label_ko'], 'emoji': ''} for f in facts],
+    }
 
 
 def air_facts(api_key):
@@ -748,24 +875,35 @@ def compose(sel, pool):
     picks = [p for p in sel.get('picks', []) if p.get('id') in by_id]
     if len(picks) < 3:
         raise RuntimeError(f'selector returned too few valid picks: {len(picks)}')
-    # Order the lines by value, largest first, but only when every line shares a
-    # unit (an all-₩ or all-% post). Mixed-unit posts (e.g. a national post's two
-    # population counts then a share %) keep the selector's narrative order.
-    keys = [_sortkey(by_id[p['id']]['value_en']) for p in picks]
-    if all(k is not None for k in keys) and len({k[0] for k in keys}) == 1:
-        picks = [p for _, p in sorted(zip(keys, picks),
-                                      key=lambda kp: kp[0][1], reverse=True)]
-    lines, used, cats, estimated = [], [], set(), False
+    # A spotlight card is one place read along a clock — now, then the usual for
+    # this hour, then the hours ahead. Sorting that by size would scramble the
+    # sequence into nonsense, so it keeps the harvester's order instead.
+    if any(by_id[p['id']]['cat'] == 'spotlight' for p in picks):
+        order = {f['id']: i for i, f in enumerate(pool)}
+        picks = sorted(picks, key=lambda p: order.get(p['id'], 0))
+    else:
+        # Order the lines by value, largest first, but only when every line shares a
+        # unit (an all-₩ or all-% post). Mixed-unit posts (e.g. a national post's two
+        # population counts then a share %) keep the selector's narrative order.
+        keys = [_sortkey(by_id[p['id']]['value_en']) for p in picks]
+        if all(k is not None for k in keys) and len({k[0] for k in keys}) == 1:
+            picks = [p for _, p in sorted(zip(keys, picks),
+                                          key=lambda kp: kp[0][1], reverse=True)]
+    lines, used, cats, estimated, forecast = [], [], set(), False, False
     for p in picks:
         f = by_id[p['id']]
         label_en = clean_label(p.get('label_en'), f['label_en'], f['value_en'])
-        label_ko = clean_label(p.get('label_ko'), f['label_en'], f['value_ko'])
+        # A fact that ships its own Korean label keeps it: those labels carry
+        # clock times, and a time is a number Python does not hand over.
+        label_ko = (f['label_ko'] if f.get('label_ko')
+                    else clean_label(p.get('label_ko'), f['label_en'], f['value_ko']))
         lines.append({'emoji': _valid_emoji(p.get('emoji')),
                       'label_en': label_en, 'label_ko': label_ko,
                       'value_en': f['value_en'], 'value_ko': f['value_ko']})
         used.append(f['id'])
         cats.add(f['cat'])
         estimated = estimated or f['estimated']
+        forecast = forecast or f.get('forecast')
 
     opener_en = clean_opener(sel.get('opener_en'), 'Seoul by the numbers')
     opener_ko = clean_opener(sel.get('opener_ko'), '숫자로 보는 서울')
@@ -802,8 +940,14 @@ def compose(sel, pool):
     # How the crowd figures are arrived at is a caveat on the numbers themselves,
     # not a credit, so it rides on the card beside them rather than in the source
     # reply. It carries no link, so nothing is lost by taking it off the reply.
-    note_en = 'Crowds are KT-estimated' if estimated else ''
-    note_ko = '인구는 KT 추정' if estimated else ''
+    # A spotlight card's later lines are predictions, and saying so is the whole
+    # reason it is not headed "today".
+    if forecast:
+        note_en = 'Hours ahead are forecasts; crowds are KT-estimated'
+        note_ko = '이후 시간대는 예측치 · 인구는 KT 추정'
+    else:
+        note_en = 'Crowds are KT-estimated' if estimated else ''
+        note_ko = '인구는 KT 추정' if estimated else ''
 
     cat_list = [by_id[p['id']]['cat'] for p in picks]
     primary = max(set(cat_list), key=cat_list.count)
@@ -884,19 +1028,40 @@ def main():
     kosis_key = config.get('kosis_key')
     state = json.loads(STATE.read_text()) if STATE.exists() else {}
 
-    pool = build_pool(api_key, state, kosis_key)
-    if len(pool) < 5:
-        sys.exit(f'Pool too small ({len(pool)} facts) — data sources may be down.')
+    # Every SPOTLIGHT_EVERY-th post drills into one place instead of setting
+    # places against each other, cycling through the curated spots. These are
+    # interspersed with the usual index cards, not a replacement for them, and a
+    # place that does not answer with enough lines simply falls back to one.
+    post_n = int(state.get('post_n', 0)) + 1
+    state['post_n'] = post_n
+    want_spotlight = FORCE_SPOTLIGHT or post_n % SPOTLIGHT_EVERY == 0
+    if want_spotlight:
+        i = int(state.get('spotlight_i', 0))
+        spot = CROWD_SPOTS[i % len(CROWD_SPOTS)]
+        facts = spotlight_facts(api_key, spot)
+        if facts:
+            state['spotlight_i'] = (i + 1) % len(CROWD_SPOTS)
+            print(f'Spotlight post #{post_n}: {spot[1]} ({len(facts)} lines, '
+                  f'no selector call).')
+            sel, pool = spotlight_sel(spot, facts), facts
+        else:
+            print(f'Spotlight on {spot[1]} returned too little; normal index instead.')
+            want_spotlight = False
 
-    # Category rotation: don't lead with the same metric two posts running.
-    last_cat = state.get('last_cat')
-    if last_cat:
-        rotated = [f for f in pool if f['cat'] != last_cat]
-        if len(rotated) >= 5:
-            pool = rotated
-    print(f'Harvested {len(pool)} candidate facts (rotated away from: {last_cat}).')
+    if not want_spotlight:
+        pool = build_pool(api_key, state, kosis_key)
+        if len(pool) < 5:
+            sys.exit(f'Pool too small ({len(pool)} facts) — data sources may be down.')
 
-    sel = select(pool, state)
+        # Category rotation: don't lead with the same metric two posts running.
+        last_cat = state.get('last_cat')
+        if last_cat:
+            rotated = [f for f in pool if f['cat'] != last_cat]
+            if len(rotated) >= 5:
+                pool = rotated
+        print(f'Harvested {len(pool)} candidate facts (rotated away from: {last_cat}).')
+        sel = select(pool, state)
+
     c = compose(sel, pool)
     used, primary = c['used'], c['primary']
 
