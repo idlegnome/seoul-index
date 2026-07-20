@@ -7,6 +7,10 @@ sales_agg.json
 
 # Card previews written into the working tree by --dry-run
 card_*.png
+meth_*.png
+
+# Post archive written before a wipe (public text, but not part of the source)
+seoul_index_posts_archive.json
 
 # Python
 __pycache__/

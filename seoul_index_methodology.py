@@ -72,7 +72,7 @@ KO_CAVEAT = ('‘인구’ 수치(특정 장소의 '
 EN_CITIES = ('Some posts set Seoul beside other cities. Those comparisons come from '
              'the OECD, which measures every city the same way. They cover whole '
              'metropolitan areas, so Seoul here is the capital region of about 24 '
-             'million, not the 9.6 million city the other posts count.')
+             'million, not the 9.6 million that the other posts count.')
 KO_CITIES = ('일부 게시물은 서울을 다른 '
              '도시와 나란히 놓습니다. 이 수치는 '
              '모든 도시를 같은 기준으로 '
