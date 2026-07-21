@@ -617,12 +617,17 @@ def transport_facts(api_key, state):
         # The station name is set in both languages here rather than left to the
         # selector: it would otherwise carry "Hongik Univ." across to the Korean
         # card in Latin script.
+        # "Busiest station" rather than "Boardings at the busiest station": the
+        # card row fits about 53 characters of label plus value before it wraps
+        # and drops its dotted leader, and station names run long (46 chars for
+        # "Gyeonggi Provincial Government Northern Office"). The row above
+        # already says "Subway boardings", so the prefix was carrying little.
         fact('sub_busiest', 'transport',
-             f'Boardings at the busiest station, {en_name(c["busiest_st"], "stations")}',
+             f'Busiest station, {en_name(c["busiest_st"], "stations")}',
              grouped(c['busiest_v']), grouped(c['busiest_v']), pair='station_gap',
              label_ko=f'가장 붐빈 역, {c["busiest_st"]}'),
         fact('sub_quietest', 'transport',
-             f'Boardings at the quietest station, {en_name(c["quietest_st"], "stations")}',
+             f'Quietest station, {en_name(c["quietest_st"], "stations")}',
              grouped(c['quietest_v']), grouped(c['quietest_v']), pair='station_gap',
              label_ko=f'가장 한산한 역, {c["quietest_st"]}'),
     ]
