@@ -1120,7 +1120,14 @@ def _sortkey(value_en):
 
 # Words that must not be left stranded at the end of a trimmed English label.
 _EN_DANGLERS = {'in', 'at', 'on', 'of', 'for', 'to', 'per', 'the', 'a', 'an',
-                'from', 'by', 'with', 'and', 'who', 'that'}
+                'from', 'by', 'with', 'and', 'who', 'that',
+                # Prepositions that take a place, and so sit immediately before
+                # the word an opener saying "Seoul" invites us to trim. Without
+                # them "Air-quality monitors reporting live across Seoul"
+                # trims to "...reporting live across", which strands the
+                # preposition exactly as the docstring says it must not.
+                'across', 'around', 'near', 'within', 'throughout', 'outside',
+                'inside', 'between', 'over', 'under', 'into', 'about'}
 
 
 def _common_run(seqs, from_end):
@@ -1285,15 +1292,22 @@ def compose(sel, pool):
     joined = ', '.join(srcs)
     label = 'Sources' if len(srcs) > 1 else 'Source'
     src_en, src_ko = f'{label}: {joined}', f'출처: {joined}'
+    # Which dataset, and from when, are keys to the figures rather than credits
+    # for them, so they belong on the card beside the numbers - the same split
+    # the OECD branch below already makes with its metro-area scope. Only the
+    # credit stays in the reply, where the domain can be a real clickable link.
+    scope_en, scope_ko = [], []
     if ('spending' in cats or 'avgbill' in cats) and SALES_Q['en']:
-        src_en += f' · Commercial districts, {SALES_Q["en"]}'
-        src_ko += f' · 상권, {SALES_Q["ko"]}'
+        scope_en.append(f'Commercial districts, {SALES_Q["en"]}')
+        scope_ko.append(f'상권, {SALES_Q["ko"]}')
     if uses_kosis:
         years = sorted({by_id[p['id']].get('year') for p in picks
                         if by_id[p['id']]['cat'] == 'national' and by_id[p['id']].get('year')})
-        yr = f', {"/".join(years)}' if years else ''
-        src_en += f' · Statistics Korea{yr}'
-        src_ko += f' · 통계청{yr}'
+        src_en += ' · Statistics Korea'
+        src_ko += ' · 통계청'
+        if years:
+            scope_en.append(f'{"/".join(years)} figures')
+            scope_ko.append(f'{"/".join(years)}년 자료')
     metro_en = metro_ko = ''
     if uses_oecd:
         # Name the metric here rather than trusting the opener. The metro-area
@@ -1333,8 +1347,13 @@ def compose(sel, pool):
     # so in practice this is the only footnote on a world card, but they are
     # joined rather than assigned in case that ever stops being true.
     if metro_en:
-        note_en = ' · '.join([p for p in (note_en, metro_en) if p])
-        note_ko = ' · '.join([p for p in (note_ko, metro_ko) if p])
+        scope_en.append(metro_en)
+        scope_ko.append(metro_ko)
+    # Caveat first, then scope: a warning about the numbers outranks a key to
+    # them. Everything here is deliberately absent from the source reply, which
+    # sits one post below and would otherwise repeat the card verbatim.
+    note_en = ' · '.join([p for p in [note_en, *scope_en] if p])
+    note_ko = ' · '.join([p for p in [note_ko, *scope_ko] if p])
 
     cat_list = [by_id[p['id']]['cat'] for p in picks]
     primary = max(set(cat_list), key=cat_list.count)
