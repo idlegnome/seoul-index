@@ -42,6 +42,7 @@ import subprocess
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -53,6 +54,7 @@ HERE = Path(__file__).parent
 CONFIG = HERE / 'seoul_index_config.json'
 STATE = HERE / 'seoul_index_state.json'
 SALES_AGG = HERE / 'sales_agg.json'
+NAMES_EN = HERE / 'seoul_index_names_en.json'
 KEYCHAIN_SERVICE = 'seoulindex-bluesky'
 CLAUDE_TOKEN_ACCOUNT = 'seoulbot'
 CLAUDE_TOKEN_SERVICE = 'claude-oauth-token'
@@ -262,6 +264,51 @@ def won_en(amount):
     if amount >= 1e6:
         return f'₩{amount / 1e6:.0f}m'
     return f'₩{grouped(amount)}'
+
+
+@lru_cache(maxsize=1)
+def _names_en():
+    """Korean -> English names for stations and districts. The Seoul feeds return
+    Korean only, and the English card should be English throughout. Regenerate
+    the table with seoul_index_names_harvest.py."""
+    try:
+        return json.loads(NAMES_EN.read_text())
+    except (OSError, ValueError) as e:
+        print(f'Warning: {NAMES_EN.name} unreadable ({e}); labels stay in Korean.')
+        return {'stations': {}, 'districts': {}}
+
+
+# Official English station names are abbreviated on the signage; the card has
+# room to spell them out. Expansions longer than MAX_EXPANDED stay short: past
+# roughly 53 characters of label plus value the row wraps, and a wrapped row
+# loses its dotted leader entirely, which breaks the house style. The station
+# list breaks cleanly at 28 — expansions run to "Sookmyung Women's University"
+# and then jump to 36+ — so the cap only holds back a handful of monsters.
+ABBREV = ((r'\bUniv\.', 'University'), (r"\bNat'l\b", 'National'),
+          (r"\bInt'l\b", 'International'))
+MAX_EXPANDED = 28
+
+
+def spell_out(name):
+    full = name
+    for pattern, word in ABBREV:
+        full = re.sub(pattern, word, full)
+    return full if len(full) <= MAX_EXPANDED else name
+
+
+def en_name(korean, kind):
+    """English name for a station/district, or the Korean original if unmapped.
+    Official names are not romanisations (홍대입구 is 'Hongik Univ.', 시청 is
+    'City Hall'), so an unmapped name has no safe English form — fall back and
+    say so rather than invent one."""
+    if not korean:
+        return korean
+    got = _names_en().get(kind, {}).get(korean)
+    if not got:
+        print(f'Warning: no English name for {kind[:-1]} {korean!r} — '
+              f'using Korean on the English card.')
+        return korean
+    return spell_out(got)
 
 
 def fact(fid, cat, label_en, value_en, value_ko, estimated=False, pair=None,
@@ -498,8 +545,10 @@ def air_facts(api_key):
         worst = max(vals, key=lambda t: t[1])
         return [fact('air_monitors', 'air', 'Air-quality monitors reporting live across Seoul',
                      str(len(vals)), str(len(vals))),
-                fact('air_worst', 'air', f'Dirtiest fine-dust reading right now ({worst[0]})',
-                     f'{worst[1]:.0f} µg/m³', f'{worst[1]:.0f} µg/m³')]
+                fact('air_worst', 'air',
+                     f'Dirtiest fine-dust reading right now ({en_name(worst[0], "districts")})',
+                     f'{worst[1]:.0f} µg/m³', f'{worst[1]:.0f} µg/m³',
+                     label_ko=f'지금 미세먼지가 가장 심한 곳 ({worst[0]})')]
     except (RuntimeError, KeyError, IndexError, ValueError):
         return []
 
@@ -561,14 +610,21 @@ def transport_facts(api_key, state):
 
     d = datetime.strptime(c['date'], '%Y%m%d').strftime('%-d %b')
     facts = [
-        fact('sub_total', 'transport', f'Subway boardings across Seoul on {d}',
+        fact('sub_total', 'transport', f'Subway boardings on {d}',
              grouped(c['sub_total']), grouped(c['sub_total']), pair='modes'),
         fact('bus_total', 'transport', f'Bus boardings the same day',
              grouped(c['bus_total']), grouped(c['bus_total']), pair='modes'),
-        fact('sub_busiest', 'transport', f'Boardings at the busiest station, {c["busiest_st"]}',
-             grouped(c['busiest_v']), grouped(c['busiest_v']), pair='station_gap'),
-        fact('sub_quietest', 'transport', f'Boardings at the quietest station, {c["quietest_st"]}',
-             grouped(c['quietest_v']), grouped(c['quietest_v']), pair='station_gap'),
+        # The station name is set in both languages here rather than left to the
+        # selector: it would otherwise carry "Hongik Univ." across to the Korean
+        # card in Latin script.
+        fact('sub_busiest', 'transport',
+             f'Boardings at the busiest station, {en_name(c["busiest_st"], "stations")}',
+             grouped(c['busiest_v']), grouped(c['busiest_v']), pair='station_gap',
+             label_ko=f'가장 붐빈 역, {c["busiest_st"]}'),
+        fact('sub_quietest', 'transport',
+             f'Boardings at the quietest station, {en_name(c["quietest_st"], "stations")}',
+             grouped(c['quietest_v']), grouped(c['quietest_v']), pair='station_gap',
+             label_ko=f'가장 한산한 역, {c["quietest_st"]}'),
     ]
     return facts
 

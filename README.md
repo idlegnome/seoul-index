@@ -37,6 +37,8 @@ Each index is rendered to a PNG by `seoul_index_card.py`: the card is laid out i
 
   Two things constrain it. A measure is used only when Seoul and at least two peers report in the **same year**, because mixed vintages are a comparison of survey dates dressed as a comparison of cities. And an OECD functional urban area is not the city: Seoul's is the whole capital region, roughly 24m people, against the 9.6m city the Seoul Open Data and KOSIS lines describe. So a world card carries "Metro areas" and the year in its footnote, under the figures it qualifies. The vein is also rationed — after a world post, world facts leave the pool for three days — because it holds the widest gaps in the pool and would otherwise crowd out the city itself.
 
+- **[OpenStreetMap](https://www.openstreetmap.org/copyright)** (ODbL), via Overpass: English names for subway stations and districts. The Seoul feeds return Korean names only, and the English card should be English throughout. Romanising them mechanically would not do it: the official name of 홍대입구 is "Hongik Univ." and of 시청 is "City Hall". OSM carries `name:en` for the whole capital-area network, including the Korail and AREX lines the Seoul Metro datasets leave out. The table is harvested once and committed, so no post depends on Overpass being up.
+
 Every post hyperlinks its source.
 
 ## Files
@@ -48,6 +50,8 @@ Every post hyperlinks its source.
 | `seoul_index_methodology.py` | Post the pinned methodology / "about" thread as prose cards. |
 | `seoul_index_sales.py` | Monthly full scan of the commercial-district sales dataset into `sales_agg.json` (the poster reads this cheaply). |
 | `seoul_index_crowd_log.py` | Crowd sampler, hourly from 05:00 to 23:00; appends observed readings to `crowd_history.jsonl` so the bot can say what a place is *usually* like. |
+| `seoul_index_names_harvest.py` | Regenerate `seoul_index_names_en.json` from OpenStreetMap. Run occasionally: stations open a few times a year. |
+| `seoul_index_names_en.json` | Korean → English names for stations and districts, so the English card carries no Hangul. |
 | `seoul_index_config.example.json` | Template for the gitignored `seoul_index_config.json`. |
 | `seoul_index_avatar.svg` | The account avatar. |
 
