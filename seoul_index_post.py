@@ -312,13 +312,20 @@ def en_name(korean, kind):
 
 
 def fact(fid, cat, label_en, value_en, value_ko, estimated=False, pair=None,
-         year=None, forecast=False, label_ko=None):
+         year=None, forecast=False, label_ko=None, pin=False):
     """One candidate line. `label_ko` is normally left None so the selector
     translates the label; spotlight lines set it because their labels carry
-    clock times, and a translated time is a number Python no longer owns."""
+    clock times, and a translated time is a number Python no longer owns.
+
+    `pin` extends that to English: the selector may reword a label, which is
+    usually an improvement but silently drops anything it reads as ornament.
+    It shortened "Subway boardings on 18 Jul" to "Subway", leaving a figure
+    with no date attached to it. Pin a label whose wording is load-bearing:
+    a date, a place, a named standard."""
     return {'id': fid, 'cat': cat, 'label_en': label_en, 'value_en': value_en,
             'value_ko': value_ko, 'estimated': estimated, 'pair': pair,
-            'year': year, 'forecast': forecast, 'label_ko': label_ko}
+            'year': year, 'forecast': forecast, 'label_ko': label_ko,
+            'pin': pin}
 
 
 # --- harvesters ------------------------------------------------------------
@@ -543,12 +550,19 @@ def air_facts(api_key):
         if not vals:
             return []
         worst = max(vals, key=lambda t: t[1])
+        # FPM is PM2.5, not PM10. The service documents its measured values as
+        # 미세먼지(PM-10), 오존, 이산화질소, 일산화탄소, 아황산가스, and OZON/NTDX/CBMX/SPDX
+        # take four of those, leaving PM as the documented PM-10 and FPM as the
+        # fine fraction — PM >= FPM in 23 of 25 districts, and CRST_SBSTN names
+        # "PM-2.5" in its own right. So the Korean term is 초미세먼지; 미세먼지 would
+        # be PM10, a different number. English names the standard outright rather
+        # than saying "fine dust", which is the ambiguity that caused this.
         return [fact('air_monitors', 'air', 'Air-quality monitors reporting live across Seoul',
-                     str(len(vals)), str(len(vals))),
+                     str(len(vals)), str(len(vals)), pin=True),
                 fact('air_worst', 'air',
-                     f'Dirtiest fine-dust reading right now ({en_name(worst[0], "districts")})',
-                     f'{worst[1]:.0f} µg/m³', f'{worst[1]:.0f} µg/m³',
-                     label_ko=f'지금 미세먼지가 가장 심한 곳 ({worst[0]})')]
+                     f'Worst PM2.5 right now ({en_name(worst[0], "districts")})',
+                     f'{worst[1]:.0f} µg/m³', f'{worst[1]:.0f} µg/m³', pin=True,
+                     label_ko=f'지금 초미세먼지가 가장 심한 곳 ({worst[0]})')]
     except (RuntimeError, KeyError, IndexError, ValueError):
         return []
 
@@ -608,12 +622,19 @@ def transport_facts(api_key, state):
              'top_route': top_route[0], 'top_route_v': top_route[1]}
         state['transport_cache'] = c
 
-    d = datetime.strptime(c['date'], '%Y%m%d').strftime('%-d %b')
+    dt = datetime.strptime(c['date'], '%Y%m%d')
+    d = dt.strftime('%-d %b')
+    d_ko = f'{dt.month}월 {dt.day}일'
+    # All four are pinned: the date says which day the count belongs to, and the
+    # station names are the ones looked up from the English name table, so
+    # neither is the selector's to reword away.
     facts = [
         fact('sub_total', 'transport', f'Subway boardings on {d}',
-             grouped(c['sub_total']), grouped(c['sub_total']), pair='modes'),
+             grouped(c['sub_total']), grouped(c['sub_total']), pair='modes',
+             pin=True, label_ko=f'{d_ko} 지하철 승차 인원'),
         fact('bus_total', 'transport', f'Bus boardings the same day',
-             grouped(c['bus_total']), grouped(c['bus_total']), pair='modes'),
+             grouped(c['bus_total']), grouped(c['bus_total']), pair='modes',
+             pin=True, label_ko='같은 날 버스 승차 인원'),
         # The station name is set in both languages here rather than left to the
         # selector: it would otherwise carry "Hongik Univ." across to the Korean
         # card in Latin script.
@@ -624,11 +645,11 @@ def transport_facts(api_key, state):
         # already says "Subway boardings", so the prefix was carrying little.
         fact('sub_busiest', 'transport',
              f'Busiest station, {en_name(c["busiest_st"], "stations")}',
-             grouped(c['busiest_v']), grouped(c['busiest_v']), pair='station_gap',
+             grouped(c['busiest_v']), grouped(c['busiest_v']), pair='station_gap', pin=True,
              label_ko=f'가장 붐빈 역, {c["busiest_st"]}'),
         fact('sub_quietest', 'transport',
              f'Quietest station, {en_name(c["quietest_st"], "stations")}',
-             grouped(c['quietest_v']), grouped(c['quietest_v']), pair='station_gap',
+             grouped(c['quietest_v']), grouped(c['quietest_v']), pair='station_gap', pin=True,
              label_ko=f'가장 한산한 역, {c["quietest_st"]}'),
     ]
     return facts
@@ -1224,7 +1245,8 @@ def compose(sel, pool):
     lines, used, cats, estimated, forecast = [], [], set(), False, False
     for p in picks:
         f = by_id[p['id']]
-        label_en = clean_label(p.get('label_en'), f['label_en'], f['value_en'])
+        label_en = (f['label_en'] if f.get('pin')
+                    else clean_label(p.get('label_en'), f['label_en'], f['value_en']))
         # A fact that ships its own Korean label keeps it: those labels carry
         # clock times, and a time is a number Python does not hand over.
         label_ko = (f['label_ko'] if f.get('label_ko')
