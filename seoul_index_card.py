@@ -84,8 +84,8 @@ html,body{{margin:0;background:#{SENTINEL}}}
 .h{{font-size:17px;font-weight:700;margin-bottom:22px;line-height:1.35}}
 .h .md{{color:{RED}}}
 .r{{display:flex;align-items:flex-end;margin:13px 0;font-size:16px}}
-.r .lab{{line-height:1}}
-.r .led{{flex:1;border-bottom:2px dotted {RED};margin:0 9px}}
+.r .lab{{line-height:1;min-width:0;overflow-wrap:anywhere}}
+.r .led{{flex:1 0 34px;border-bottom:2px dotted {RED};margin:0 9px}}
 .r .val{{font-weight:700;line-height:1;white-space:nowrap}}
 .fn{{margin-top:20px;font-size:13px;line-height:1.4;color:{MUTED}}}
 </style></head><body>
