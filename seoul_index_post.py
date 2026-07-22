@@ -67,6 +67,16 @@ CLAUDE_MODEL = 'claude-sonnet-5'  # wit + Korean; easy to change if unavailable
 # (like invalid JSON), then raises so the failure lands in the launchd log.
 CLAUDE_TIMEOUT = 300
 
+# Refuse anything unrecognised: with membership tests instead of argparse, an
+# unknown flag would silently run LIVE (`--help` published a real thread on
+# 20 Jul 2026). Fail before doing anything at all.
+_KNOWN_ARGS = {'--dry-run', '--spotlight'}
+_unknown = [a for a in sys.argv[1:] if a not in _KNOWN_ARGS]
+if _unknown:
+    sys.exit(f'Unknown argument(s): {" ".join(_unknown)}. '
+             f'Recognised: {" ".join(sorted(_KNOWN_ARGS))}. '
+             f'Refusing to run (a bare run posts live).')
+
 DRY_RUN = '--dry-run' in sys.argv
 FORCE_SPOTLIGHT = '--spotlight' in sys.argv   # for testing the single-place card
 MAX_POST_CHARS = 285  # buffer under Bluesky's 300-grapheme limit
@@ -216,6 +226,14 @@ SALES_Q = {'en': None, 'ko': None}
 
 
 # --- small utilities -------------------------------------------------------
+
+def write_json_atomic(path, data, **dumps_kwargs):
+    """Write JSON via a sibling temp file and an atomic rename, so a crash
+    mid-write can never leave a truncated state or cache file behind."""
+    tmp = path.with_name(path.name + '.tmp')
+    tmp.write_text(json.dumps(data, **dumps_kwargs))
+    os.replace(tmp, path)
+
 
 def http_get_json(url):
     for _ in range(3):
@@ -919,7 +937,7 @@ def molit_facts(molit_key):
         except (RuntimeError, OSError, ValueError) as e:
             print(f'Warning: MOLIT harvest failed ({e}); no property lines.')
             return []
-        MOLIT_AGG.write_text(json.dumps(agg, ensure_ascii=False, indent=1))
+        write_json_atomic(MOLIT_AGG, agg, ensure_ascii=False, indent=1)
     y, m = int(ym[:4]), int(ym[4:])
     MOLIT_M['en'], MOLIT_M['ko'] = f'{MONTHS_EN[m - 1]} {y}', f'{y}년 {m}월'
     facts = []
@@ -1821,7 +1839,7 @@ def main():
     state['last_success_at'] = datetime.now(timezone.utc).isoformat()
     if primary == 'world':
         state['last_world_at'] = state['last_success_at']
-    STATE.write_text(json.dumps(state, ensure_ascii=False, indent=2))
+    write_json_atomic(STATE, state, ensure_ascii=False, indent=2)
 
 
 if __name__ == '__main__':
