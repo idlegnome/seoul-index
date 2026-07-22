@@ -60,6 +60,11 @@ KEYCHAIN_SERVICE = 'seoulindex-bluesky'
 CLAUDE_TOKEN_ACCOUNT = 'seoulbot'
 CLAUDE_TOKEN_SERVICE = 'claude-oauth-token'
 CLAUDE_MODEL = 'claude-sonnet-5'  # wit + Korean; easy to change if unavailable
+# Hard cap on one `claude -p` selector call. Healthy calls finish well inside
+# this; without a cap the call hung indefinitely twice on 21 Jul 2026, and a
+# hung selector is a post that silently never happens. A timeout retries once
+# (like invalid JSON), then raises so the failure lands in the launchd log.
+CLAUDE_TIMEOUT = 300
 
 DRY_RUN = '--dry-run' in sys.argv
 FORCE_SPOTLIGHT = '--spotlight' in sys.argv   # for testing the single-place card
@@ -1015,8 +1020,15 @@ def select(pool, state):
                'OPENERS': [list(o) for o in OPENERS], 'AVOID_IDS': avoid}
     prompt = SELECT_PROMPT + '\n\n' + json.dumps(payload, ensure_ascii=False)
     for attempt in range(2):
-        r = subprocess.run(['claude', '-p', '--model', CLAUDE_MODEL, prompt],
-                           capture_output=True, text=True, env=claude_env())
+        try:
+            r = subprocess.run(['claude', '-p', '--model', CLAUDE_MODEL, prompt],
+                               capture_output=True, text=True, env=claude_env(),
+                               timeout=CLAUDE_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            if attempt == 0:
+                continue
+            raise RuntimeError(
+                f'claude -p timed out after {CLAUDE_TIMEOUT}s, twice')
         if r.returncode != 0:
             err = (r.stderr or r.stdout or '').strip() or '(no output)'
             raise RuntimeError(f'claude -p failed (exit {r.returncode}): {err}')
