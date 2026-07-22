@@ -4,6 +4,7 @@ seoul_index_config.json
 # Runtime state and generated caches
 seoul_index_state.json
 sales_agg.json
+molit_agg.json
 
 # Card previews written into the working tree by --dry-run
 card_*.png

@@ -42,6 +42,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -200,6 +201,7 @@ OPENERS = [
     ('From the city’s data', '서울시 데이터에서'),
     ('Seoul and the nation', '서울과 전국'),
     ('Seoul among world cities', '세계 도시 속의 서울'),
+    ('The apartment market, one month', '한 달의 아파트 시장'),
     ('Green space per person', '1인당 녹지 면적'),
     ('Within a five-minute walk of transit', '도보 5분 내 대중교통'),
     ('Summer nights, hotter than the countryside', '여름밤, 도시가 더 더운 만큼'),
@@ -253,9 +255,11 @@ def grouped(n):
 
 def won_ko(amount):
     """Korean currency: 653,500,000,000 -> '6,535억 원'; 3.67e12 -> '3조 6,701억 원';
-    small per-visit amounts (< 1억) -> '5,441원'."""
-    if amount < 1e8:
+    1천만–1억 (a cheap apartment) -> '6,500만 원'; small per-visit amounts -> '5,441원'."""
+    if amount < 1e7:
         return f'{grouped(amount)}원'
+    if amount < 1e8:
+        return f'{int(round(amount / 1e4)):,}만 원'
     eok = int(round(amount / 1e8))  # 억 = 10^8
     if eok >= 10000:
         jo, rem = divmod(eok, 10000)
@@ -770,6 +774,194 @@ def sales_facts():
     return facts
 
 
+# --- apartment market (MOLIT 실거래가) --------------------------------------
+# 국토교통부's real-transaction filings, via data.go.kr (RTMSDataSvcAptTrade /
+# RTMSDataSvcAptRent, one 활용신청 each, 자동승인). A different publisher from
+# the city, so compose() credits rt.molit.go.kr — the ministry's own 실거래가
+# portal — on its own source line.
+#
+# Editorial rule (the one that stopped the KTO vein): every line must be a
+# PUBLISHED figure or a plain count of published rows. The highest sale is an
+# actual filed row; "sales filed" is counting; no medians, no averages.
+#
+# The gateway rejects curl's default User-Agent (bare "Forbidden"), so
+# _molit_items sends a browser one. Amounts arrive in 만원 with comma grouping.
+# Cancelled sales stay in the feed with cdealType set — they are filtered out.
+#
+# DEAL_YMD is the CONTRACT month, and filings are due within 30 days of the
+# contract, so the newest complete month is two calendar months back. That
+# month's figures are frozen, which is what makes MOLIT_AGG safe to cache:
+# one harvest (~50 calls) serves the whole month of posts.
+
+MOLIT_AGG = HERE / 'molit_agg.json'
+MOLIT_BASE = 'http://apis.data.go.kr/1613000'
+MOLIT_UA = ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+            'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15')
+
+# Seoul's 25 자치구 by 법정동 code prefix (LAWD_CD). Verified 22 Jul 2026
+# against the API itself: each code's May-2026 rows majority-report the same
+# district in estateAgentSggNm.
+SEOUL_LAWD = {
+    '11110': '종로구', '11140': '중구', '11170': '용산구', '11200': '성동구',
+    '11215': '광진구', '11230': '동대문구', '11260': '중랑구', '11290': '성북구',
+    '11305': '강북구', '11320': '도봉구', '11350': '노원구', '11380': '은평구',
+    '11410': '서대문구', '11440': '마포구', '11470': '양천구', '11500': '강서구',
+    '11530': '구로구', '11545': '금천구', '11560': '영등포구', '11590': '동작구',
+    '11620': '관악구', '11650': '서초구', '11680': '강남구', '11710': '송파구',
+    '11740': '강동구',
+}
+
+MONTHS_EN = ('January', 'February', 'March', 'April', 'May', 'June', 'July',
+             'August', 'September', 'October', 'November', 'December')
+
+# Set by molit_facts() so compose() can put the filing month on the card
+# instead of repeating it on every row (same device as SALES_Q).
+MOLIT_M = {'en': None, 'ko': None}
+
+
+def _molit_month():
+    """Newest complete contract month, as 'YYYYMM'. Filings are due within 30
+    days of the contract, so two months back is the newest month that can no
+    longer grow."""
+    first = datetime.now(SEOUL_TZ).date().replace(day=1)
+    for _ in range(2):
+        first = (first - timedelta(days=1)).replace(day=1)
+    return f'{first.year}{first.month:02d}'
+
+
+def _molit_items(service, lawd, ym, key):
+    """All <item> rows for one district-month, paginated on totalCount."""
+    rows, page = [], 1
+    while True:
+        url = (f'{MOLIT_BASE}/{service}/get{service}?serviceKey={key}'
+               f'&LAWD_CD={lawd}&DEAL_YMD={ym}&numOfRows=1000&pageNo={page}')
+        r = subprocess.run(['curl', '-s', '--max-time', '60', '-A', MOLIT_UA, url],
+                           capture_output=True, text=True)
+        try:
+            root = ET.fromstring(r.stdout)
+        except ET.ParseError:
+            raise RuntimeError(f'MOLIT {service} {lawd}/{ym}: not XML: '
+                               f'{r.stdout[:80]!r}')
+        if root.findtext('.//resultCode') != '000':
+            raise RuntimeError(f'MOLIT {service} {lawd}/{ym}: '
+                               f'{root.findtext(".//resultMsg")!r}')
+        rows += list(root.iter('item'))
+        total = int(root.findtext('.//totalCount') or 0)
+        if len(rows) >= total:
+            return rows
+        page += 1
+
+
+def _manwon(s):
+    """'197,000' (만원) -> 1_970_000_000 (원), or None."""
+    s = (s or '').replace(',', '').strip()
+    return int(s) * 10_000 if s.isdigit() else None
+
+
+def _molit_harvest(key, ym):
+    """One month's citywide aggregates, computed from every filed row. All 25
+    districts or nothing: a partial harvest would sell a partial city as
+    'citywide', so any district failing fails the month."""
+    trade_n, by_gu = 0, {}
+    top = low = None    # [amount, 구, 아파트명]
+    jeonse_n = wolse_n = 0
+    top_dep = None      # [amount, 구]
+    for lawd, gu in SEOUL_LAWD.items():
+        for it in _molit_items('RTMSDataSvcAptTrade', lawd, ym, key):
+            if (it.findtext('cdealType') or '').strip():
+                continue    # cancelled sale, retracted but still in the feed
+            amt = _manwon(it.findtext('dealAmount'))
+            if amt is None:
+                continue
+            trade_n += 1
+            by_gu[gu] = by_gu.get(gu, 0) + 1
+            apt = (it.findtext('aptNm') or '').strip()
+            if top is None or amt > top[0]:
+                top = [amt, gu, apt]
+            if low is None or amt < low[0]:
+                low = [amt, gu, apt]
+        for it in _molit_items('RTMSDataSvcAptRent', lawd, ym, key):
+            dep = _manwon(it.findtext('deposit'))
+            if dep is None:
+                continue
+            if _manwon(it.findtext('monthlyRent')):
+                wolse_n += 1
+            else:
+                jeonse_n += 1
+                if top_dep is None or dep > top_dep[0]:
+                    top_dep = [dep, gu]
+    # A real month has thousands of each; zeros mean the feed (or a field
+    # name) changed under us, and caching them would freeze the mistake.
+    if not trade_n or not (jeonse_n + wolse_n):
+        raise RuntimeError(f'MOLIT harvest for {ym} looks empty '
+                           f'(trade={trade_n}, leases={jeonse_n + wolse_n})')
+    return {'month': ym, 'trade_n': trade_n, 'by_gu': by_gu, 'top': top,
+            'low': low, 'jeonse_n': jeonse_n, 'wolse_n': wolse_n,
+            'top_deposit': top_dep}
+
+
+def molit_facts(molit_key):
+    """Apartment-market lines from the newest complete month's filings."""
+    if not molit_key:
+        return []
+    ym = _molit_month()
+    agg = None
+    if MOLIT_AGG.exists():
+        try:
+            cached = json.loads(MOLIT_AGG.read_text())
+            if cached.get('month') == ym:
+                agg = cached
+        except (OSError, ValueError):
+            pass
+    if agg is None:
+        try:
+            agg = _molit_harvest(molit_key, ym)
+        except (RuntimeError, OSError, ValueError) as e:
+            print(f'Warning: MOLIT harvest failed ({e}); no property lines.')
+            return []
+        MOLIT_AGG.write_text(json.dumps(agg, ensure_ascii=False, indent=1))
+    y, m = int(ym[:4]), int(ym[4:])
+    MOLIT_M['en'], MOLIT_M['ko'] = f'{MONTHS_EN[m - 1]} {y}', f'{y}년 {m}월'
+    facts = []
+    if agg.get('top') and agg.get('low') and agg['top'] != agg['low']:
+        for fid, (amt, gu, _apt), en_word, ko_word in (
+                ('apt_top_sale', agg['top'], 'Most', '가장 비싸게 팔린'),
+                ('apt_low_sale', agg['low'], 'Least', '가장 싸게 팔린')):
+            facts.append(fact(fid, 'property',
+                              f'{en_word} paid for an apartment '
+                              f'({en_name(gu, "districts")})',
+                              won_en(amt), won_ko(amt), pair='apt_price_gap',
+                              pin=True, label_ko=f'{ko_word} 아파트, {gu}'))
+    if agg.get('trade_n'):
+        n = agg['trade_n']
+        facts.append(fact('apt_sales_n', 'property',
+                          'Apartment sales filed citywide',
+                          grouped(n), grouped(n)))
+    by_gu = agg.get('by_gu') or {}
+    if len(by_gu) >= 2:
+        busy = max(by_gu, key=by_gu.get)
+        quiet = min(by_gu, key=by_gu.get)
+        for fid, gu in (('apt_busy_gu', busy), ('apt_quiet_gu', quiet)):
+            n = by_gu[gu]
+            facts.append(fact(fid, 'property',
+                              f'Sales filed in {en_name(gu, "districts")}',
+                              grouped(n), grouped(n), pair='apt_count_gap',
+                              pin=True, label_ko=f'{gu} 매매 신고'))
+    if agg.get('top_deposit'):
+        amt, gu = agg['top_deposit']
+        facts.append(fact('apt_top_jeonse', 'property',
+                          f'Largest jeonse deposit ({en_name(gu, "districts")})',
+                          won_en(amt), won_ko(amt), pin=True,
+                          label_ko=f'최고 전세 보증금, {gu}'))
+    if agg.get('jeonse_n') and agg.get('wolse_n'):
+        for fid, label, n in (
+                ('lease_jeonse_n', 'Jeonse leases filed', agg['jeonse_n']),
+                ('lease_wolse_n', 'Monthly-rent leases filed', agg['wolse_n'])):
+            facts.append(fact(fid, 'property', label, grouped(n), grouped(n),
+                              pair='lease_split'))
+    return facts
+
+
 def _url(s):
     from urllib.parse import quote
     return quote(s)
@@ -969,7 +1161,7 @@ def world_facts():
 
 # --- selection + composition ----------------------------------------------
 
-def build_pool(api_key, state, kosis_key=None):
+def build_pool(api_key, state, kosis_key=None, molit_key=None):
     pool = []
     pool += crowd_facts(api_key, crowd_window(state))
     pool += air_facts(api_key)
@@ -978,6 +1170,7 @@ def build_pool(api_key, state, kosis_key=None):
     pool += sales_facts()
     pool += kosis_facts(kosis_key)
     pool += world_facts()
+    pool += molit_facts(molit_key)
     return pool
 
 
@@ -996,6 +1189,7 @@ Rules:
 - Do not mix unrelated live "right now" lines with quarterly spending lines in a way that breaks a single frame, unless the contrast itself is the point.
 - "national" lines (Seoul set against the whole country: its share of the population, the fertility-rate gap) are annual figures from a different source. Build them into their own "Seoul and the nation" post — never mix a national line with a live "right now" line or a spending line. The fertility pair is only two lines, so pair it with the population-share line to make a set of three.
 - "world" lines set Seoul's metro area against other cities' metro areas, from the OECD. Their labels are BARE CITY NAMES, so the opener MUST say what is being measured (e.g. "Green space per person", "Within a five-minute walk of transit") — this is the one case where the opener names the metric. Build them into their own post: every world line in a post must come from the SAME pair (all city_green, or all city_transit, never a mix), and a world line NEVER appears alongside a Seoul-only line of any other category. Always include the Seoul line.
+- "property" lines are one month's apartment-market filings from the national land ministry: actual sale prices (the dearest and cheapest single sales), a record jeonse deposit, and counts of filings. Build them into their own post — never alongside a live "right now" line, a spending line, a national line or a world line. The pairs are the point: the price gap (dearest vs cheapest sale) or the jeonse/monthly-rent split. Never put a month or date in a property label — the filing month rides on the card automatically.
 - Keep the opener neutral (a time or place framing), EXCEPT on a world post, where it must name the metric as described above. Pick one from OPENERS, or write a short neutral one (max ~5 words) — it must NOT give away or hint at the pairing. Provide it in English and Korean.
 - You may lightly reword an English label for wit, but keep its meaning and DO NOT put any digit in a label.
 - Translate every chosen label to natural Korean (labels only — never restate the number in the label).
@@ -1296,12 +1490,14 @@ def compose(sel, pool):
 
     # Source line credits every distinct source used. Seoul Open Data covers
     # everything except the KOSIS 'national' figures, which get their own credit.
-    uses_seoul = any(c not in ('national', 'world') for c in cats)
+    uses_seoul = any(c not in ('national', 'world', 'property') for c in cats)
     uses_kosis = 'national' in cats
     uses_oecd = 'world' in cats
+    uses_molit = 'property' in cats
     srcs = (['data.seoul.go.kr'] if uses_seoul else []) + \
            (['kosis.kr'] if uses_kosis else []) + \
-           ([OECD_DOMAIN] if uses_oecd else [])
+           ([OECD_DOMAIN] if uses_oecd else []) + \
+           (['rt.molit.go.kr'] if uses_molit else [])
     if not srcs:
         srcs = ['data.seoul.go.kr']
     joined = ', '.join(srcs)
@@ -1323,6 +1519,14 @@ def compose(sel, pool):
         if years:
             scope_en.append(f'{"/".join(years)} figures')
             scope_ko.append(f'{"/".join(years)}년 자료')
+    if uses_molit:
+        # Same split as KOSIS: the ministry is the credit, the filing month is
+        # a key to the figures and rides on the card footnote.
+        src_en += ' · MOLIT'
+        src_ko += ' · 국토교통부'
+        if MOLIT_M['en']:
+            scope_en.append(f'Apartment filings, {MOLIT_M["en"]}')
+            scope_ko.append(f'아파트 실거래 신고, {MOLIT_M["ko"]}')
     metro_en = metro_ko = ''
     if uses_oecd:
         # Name the metric here rather than trusting the opener. The metro-area
@@ -1406,7 +1610,8 @@ def compose(sel, pool):
 
 LINK_DOMAINS = [('data.seoul.go.kr', 'https://data.seoul.go.kr'),
                 ('kosis.kr', 'https://kosis.kr'),
-                (OECD_DOMAIN, f'https://{OECD_DOMAIN}')]
+                (OECD_DOMAIN, f'https://{OECD_DOMAIN}'),
+                ('rt.molit.go.kr', 'https://rt.molit.go.kr')]
 
 
 def add_tags(tb, body, extra=None):
@@ -1463,6 +1668,7 @@ def main():
     config = json.loads(CONFIG.read_text())
     api_key = config['api_key']
     kosis_key = config.get('kosis_key')
+    molit_key = config.get('data_go_kr_key')
     state = json.loads(STATE.read_text()) if STATE.exists() else {}
 
     # One post in SPOTLIGHT_EVERY, on average, drills into one place instead of
@@ -1497,7 +1703,7 @@ def main():
     state['last_spotlight'] = want_spotlight
 
     if not want_spotlight:
-        pool = build_pool(api_key, state, kosis_key)
+        pool = build_pool(api_key, state, kosis_key, molit_key)
         if len(pool) < 5:
             sys.exit(f'Pool too small ({len(pool)} facts) — data sources may be down.')
 

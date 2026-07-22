@@ -6,6 +6,8 @@
   "data4library_key": "YOUR_DATA4LIBRARY_KEY",
   "_kosis_comment": "KOSIS OpenAPI apiKey (https://kosis.kr/openapi) for the national-contrast lines. Free after registration. The key is a base64 string that includes a trailing '='.",
   "kosis_key": "YOUR_KOSIS_KEY",
+  "_data_go_kr_comment": "공공데이터포털 (data.go.kr) general service key, for the MOLIT apartment-market lines. One key per account, but each API needs its own 활용신청 (RTMSDataSvcAptTrade and RTMSDataSvcAptRent, both 자동승인) before the key works against it.",
+  "data_go_kr_key": "YOUR_DATA_GO_KR_KEY",
   "handle": "your-handle.bsky.social",
   "_keychain_comment": "The Bluesky app password is NOT stored here. Put it in the macOS Keychain: security add-generic-password -a \"your-handle.bsky.social\" -s \"seoulindex-bluesky\" -w",
   "_claude_comment": "The claude -p selector authenticates with a long-lived Claude Code setup-token in the Keychain (account 'seoulbot', service 'claude-oauth-token'). Create one with: claude setup-token"
