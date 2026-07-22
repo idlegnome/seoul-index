@@ -44,7 +44,7 @@ import subprocess
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -213,6 +213,8 @@ OPENERS = [
     ('Seoul and the nation', '서울과 전국'),
     ('Seoul among world cities', '세계 도시 속의 서울'),
     ('The apartment market, one month', '한 달의 아파트 시장'),
+    ('Fifty years apart', '50년의 간격'),
+    ('Seoul, yesterday', '어제의 서울'),
     ('Green space per person', '1인당 녹지 면적'),
     ('Within a five-minute walk of transit', '도보 5분 내 대중교통'),
     ('Summer nights, hotter than the countryside', '여름밤, 도시가 더 더운 만큼'),
@@ -981,6 +983,135 @@ def molit_facts(molit_key):
     return facts
 
 
+# --- weather (KMA ASOS, the official Seoul station) ------------------------
+# 기상청's daily surface observations for station 108 — the Seoul reference
+# station, observing since 1904 — via data.go.kr (자동승인, approved 22 Jul
+# 2026). The service publishes through YESTERDAY only (D-1), so the freshest
+# line is yesterday's, and the monthly lines use the last full month.
+#
+# Same editorial rule as the property vein: a line is a published daily
+# reading (the hottest day IS a row) or a count of rows against a criterion
+# stated in the label. No monthly means or totals — those are computations.
+#
+# The half-century pair is the vein's reason to exist: the same calendar
+# month, WX_YEARS_BACK years apart, each side a published reading from the
+# same station. The archive answered June 1976 in full when probed; a month
+# with no rows (there are wartime gaps) simply drops its side of the pair.
+
+WX_BASE = ('http://apis.data.go.kr/1360000/AsosDalyInfoService/getWthrDataList'
+           '?serviceKey={key}&dataType=JSON&dataCd=ASOS&dateCd=DAY&stnIds=108'
+           '&numOfRows=31&pageNo=1&startDt={start}&endDt={end}')
+WX_YEARS_BACK = 50
+
+
+def _wx_rows(key, start, end):
+    """Daily rows for one date span, [] on any failure (the vein just thins)."""
+    url = WX_BASE.format(key=key, start=start, end=end)
+    r = subprocess.run(['curl', '-s', '--max-time', '30', '-A', MOLIT_UA, url],
+                       capture_output=True, text=True)
+    try:
+        body = json.loads(r.stdout)['response']['body']
+    except (ValueError, KeyError, TypeError):
+        return []
+    items = body.get('items')
+    return items.get('item') or [] if isinstance(items, dict) else []
+
+
+def _wx_num(row, field):
+    """A reading as float, or None — old rows leave some fields blank."""
+    try:
+        return float((row.get(field) or '').strip())
+    except ValueError:
+        return None
+
+
+def _wx_extremes(rows):
+    """The published extreme days of a month, plus criterion counts."""
+    temps = [r for r in rows if _wx_num(r, 'maxTa') is not None]
+    wets = [r for r in rows if (_wx_num(r, 'sumRn') or 0) > 0]
+    return {
+        'hot': max(temps, key=lambda r: _wx_num(r, 'maxTa'), default=None),
+        'wet': max(wets, key=lambda r: _wx_num(r, 'sumRn'), default=None),
+        'swelter': sum(1 for r in temps if _wx_num(r, 'maxTa') >= 33),
+        'tropical': sum(1 for r in rows
+                        if (_wx_num(r, 'minTa') or -99) >= 25),
+        'freeze': sum(1 for r in temps if _wx_num(r, 'maxTa') < 0),
+    }
+
+
+def kma_facts(key):
+    """Weather lines: yesterday's readings, and the last full month set
+    against the same month fifty years earlier."""
+    if not key:
+        return []
+    today = datetime.now(SEOUL_TZ).date()
+    facts = []
+
+    yday = today - timedelta(days=1)
+    rows = _wx_rows(key, f'{yday:%Y%m%d}', f'{yday:%Y%m%d}')
+    if rows:
+        r = rows[0]
+        hi, lo, rn = (_wx_num(r, 'maxTa'), _wx_num(r, 'minTa'),
+                      _wx_num(r, 'sumRn'))
+        if hi is not None and lo is not None:
+            facts.append(fact('wx_yday_hi', 'weather', "Seoul's high yesterday",
+                              f'{hi:.1f}°C', f'{hi:.1f}°C', pair='wx_yday',
+                              pin=True, label_ko='어제 서울 최고기온'))
+            facts.append(fact('wx_yday_lo', 'weather', "Seoul's low yesterday",
+                              f'{lo:.1f}°C', f'{lo:.1f}°C', pair='wx_yday',
+                              pin=True, label_ko='어제 서울 최저기온'))
+        if rn:
+            facts.append(fact('wx_yday_rain', 'weather',
+                              'Rain on Seoul yesterday',
+                              f'{rn:.1f}mm', f'{rn:.1f}mm', pair='wx_yday',
+                              pin=True, label_ko='어제 서울에 내린 비'))
+
+    # Last FULL month against the same month fifty years back: both sides
+    # are complete, and neither can still grow.
+    m_end = today.replace(day=1) - timedelta(days=1)
+    m_start = m_end.replace(day=1)
+    mon, mon_en = m_start.month, MONTHS_EN[m_start.month - 1]
+    then_y = m_start.year - WX_YEARS_BACK
+    then_end = (date(then_y, mon, 28) + timedelta(days=4)).replace(day=1) \
+        - timedelta(days=1)
+    now = _wx_extremes(_wx_rows(key, f'{m_start:%Y%m%d}', f'{m_end:%Y%m%d}'))
+    then = _wx_extremes(_wx_rows(key, f'{then_y}{mon:02d}01',
+                                 f'{then_end:%Y%m%d}'))
+
+    for side, ex, y in (('now', now, m_start.year), ('then', then, then_y)):
+        if ex['hot']:
+            v = _wx_num(ex['hot'], 'maxTa')
+            facts.append(fact(f'wx_hot_{side}', 'weather',
+                              f'Hottest day, {mon_en} {y}',
+                              f'{v:.1f}°C', f'{v:.1f}°C', pair='wx_heat_then',
+                              pin=True, label_ko=f'가장 더웠던 날, {y}년 {mon}월'))
+        if ex['wet']:
+            v = _wx_num(ex['wet'], 'sumRn')
+            facts.append(fact(f'wx_wet_{side}', 'weather',
+                              f'Wettest day, {mon_en} {y}',
+                              f'{v:.1f}mm', f'{v:.1f}mm', pair='wx_rain_then',
+                              pin=True,
+                              label_ko=f'비가 가장 많이 온 날, {y}년 {mon}월'))
+    # Criterion counts, offered only in the season where they bite: a pair
+    # of zeros is not a fact.
+    for fid, kind, en_label, ko_label in (
+            ('wx_swelter', 'swelter', 'Days of 33°C or more',
+             '최고기온 33°C 이상인 날'),
+            ('wx_tropical', 'tropical', 'Nights never below 25°C',
+             '최저기온 25°C 이상인 날'),
+            ('wx_freeze', 'freeze', 'Days never above freezing',
+             '종일 영하였던 날')):
+        if now[kind] or then[kind]:
+            for side, ex, y in (('now', now, m_start.year),
+                                ('then', then, then_y)):
+                facts.append(fact(f'{fid}_{side}', 'weather',
+                                  f'{en_label}, {mon_en} {y}',
+                                  grouped(ex[kind]), grouped(ex[kind]),
+                                  pair=f'{fid}_then', pin=True,
+                                  label_ko=f'{ko_label}, {y}년 {mon}월'))
+    return facts
+
+
 def _url(s):
     from urllib.parse import quote
     return quote(s)
@@ -1180,7 +1311,9 @@ def world_facts():
 
 # --- selection + composition ----------------------------------------------
 
-def build_pool(api_key, state, kosis_key=None, molit_key=None):
+def build_pool(api_key, state, kosis_key=None, gov_key=None):
+    # gov_key is the shared data.go.kr key: one key, per-API 활용신청, so the
+    # property and weather veins both ride on it.
     pool = []
     pool += crowd_facts(api_key, crowd_window(state))
     pool += air_facts(api_key)
@@ -1189,7 +1322,8 @@ def build_pool(api_key, state, kosis_key=None, molit_key=None):
     pool += sales_facts()
     pool += kosis_facts(kosis_key)
     pool += world_facts()
-    pool += molit_facts(molit_key)
+    pool += molit_facts(gov_key)
+    pool += kma_facts(gov_key)
     return pool
 
 
@@ -1209,10 +1343,11 @@ Rules:
 - "national" lines (Seoul set against the whole country: its share of the population, the fertility-rate gap) are annual figures from a different source. Build them into their own "Seoul and the nation" post — never mix a national line with a live "right now" line or a spending line. The fertility pair is only two lines, so pair it with the population-share line to make a set of three.
 - "world" lines set Seoul's metro area against other cities' metro areas, from the OECD. Their labels are BARE CITY NAMES, so the opener MUST say what is being measured (e.g. "Green space per person", "Within a five-minute walk of transit") — this is the one case where the opener names the metric. Build them into their own post: every world line in a post must come from the SAME pair (all city_green, or all city_transit, never a mix), and a world line NEVER appears alongside a Seoul-only line of any other category. Always include the Seoul line.
 - "property" lines are one month's apartment-market filings from the national land ministry: actual sale prices (the dearest and cheapest single sales), a record jeonse deposit, and counts of filings. Build them into their own post — never alongside a live "right now" line, a spending line, a national line or a world line. The pairs are the point: the price gap (dearest vs cheapest sale) or the jeonse/monthly-rent split. Never put a month or date in a property label — the filing month rides on the card automatically.
+- "weather" lines are published readings from Seoul's official weather station: yesterday's high/low/rain, and the last full month set against the SAME month FIFTY YEARS earlier (each label already carries its month and year — do not reword those labels). Build them into their own post, never mixed with any other category, and pick ONE frame: either the yesterday set, or the then-and-now set. In a then-and-now post every pair must keep BOTH its sides, every pair must put its two years in the SAME order, and the arrangement carries the half-century — never point it out.
 - Keep the opener neutral (a time or place framing), EXCEPT on a world post, where it must name the metric as described above. Pick one from OPENERS, or write a short neutral one (max ~5 words) — it must NOT give away or hint at the pairing. Provide it in English and Korean.
 - You may lightly reword an English label for wit, but keep its meaning and DO NOT put any digit in a label.
 - Translate every chosen label to natural Korean (labels only — never restate the number in the label).
-- Emoji: give "opener_emoji" one topic emoji that fits the whole set. For each pick, give an "emoji" ONLY where an obvious, tasteful one exists (a food, a shop, a place, a clear object). Leave "emoji" as "" for abstract lines (shares, rates, counts of people, air readings) — a forced emoji looks worse than none. One emoji each, the same emoji works for both languages. NEVER use a number/keycap emoji (0-9, #) — numbers only ever come from the data.
+- Emoji: give "opener_emoji" one topic emoji that fits the whole set. For each pick, give an "emoji" ONLY where an obvious, tasteful one exists (a food, a shop, a place, a clear object). Leave "emoji" as "" for abstract lines (shares, rates, counts of people, air readings) — a forced emoji looks worse than none. One emoji each, the same emoji works for both languages, and never repeat the opener_emoji on a line — the opener already said it. NEVER use a number/keycap emoji (0-9, #) — numbers only ever come from the data.
 - Avoid the ids in AVOID_IDS.
 
 Return ONLY JSON:
@@ -1488,7 +1623,8 @@ def compose(sel, pool):
                     else clean_label(p.get('label_ko'), f['label_en'], f['value_ko']))
         lines.append({'emoji': _valid_emoji(p.get('emoji')),
                       'label_en': label_en, 'label_ko': label_ko,
-                      'value_en': f['value_en'], 'value_ko': f['value_ko']})
+                      'value_en': f['value_en'], 'value_ko': f['value_ko'],
+                      'pin': bool(f.get('pin') or f.get('label_ko'))})
         used.append(f['id'])
         cats.add(f['cat'])
         estimated = estimated or f['estimated']
@@ -1500,23 +1636,29 @@ def compose(sel, pool):
 
     # Say the shared part once: the selector is asked for bare labels, but it
     # often copies a pool label verbatim onto every line, so trim deterministically
-    # rather than trust the prompt.
+    # rather than trust the prompt. PINNED labels are exempt: a pin declares the
+    # wording load-bearing, and trimming a shared "June" off "Hottest day,
+    # June 1976" turned a month's record into a claim about the whole year.
     for lang, ko in (('en', False), ('ko', True)):
         opener = opener_en if lang == 'en' else opener_ko
         trimmed = dedupe_labels([l[f'label_{lang}'] for l in lines], opener, korean=ko)
         for l, t in zip(lines, trimmed):
-            l[f'label_{lang}'] = t
+            if not l['pin']:
+                l[f'label_{lang}'] = t
 
     # Source line credits every distinct source used. Seoul Open Data covers
     # everything except the KOSIS 'national' figures, which get their own credit.
-    uses_seoul = any(c not in ('national', 'world', 'property') for c in cats)
+    uses_seoul = any(c not in ('national', 'world', 'property', 'weather')
+                     for c in cats)
     uses_kosis = 'national' in cats
     uses_oecd = 'world' in cats
     uses_molit = 'property' in cats
+    uses_kma = 'weather' in cats
     srcs = (['data.seoul.go.kr'] if uses_seoul else []) + \
            (['kosis.kr'] if uses_kosis else []) + \
            ([OECD_DOMAIN] if uses_oecd else []) + \
-           (['rt.molit.go.kr'] if uses_molit else [])
+           (['rt.molit.go.kr'] if uses_molit else []) + \
+           (['data.kma.go.kr'] if uses_kma else [])
     if not srcs:
         srcs = ['data.seoul.go.kr']
     joined = ', '.join(srcs)
@@ -1546,6 +1688,13 @@ def compose(sel, pool):
         if MOLIT_M['en']:
             scope_en.append(f'Apartment filings, {MOLIT_M["en"]}')
             scope_ko.append(f'아파트 실거래 신고, {MOLIT_M["ko"]}')
+    if uses_kma:
+        # Which station the readings come from is a key to the figures, so
+        # it rides on the card; the labels already carry their months.
+        src_en += ' · KMA'
+        src_ko += ' · 기상청'
+        scope_en.append('Official Seoul station (108)')
+        scope_ko.append('서울 대표 관측소(108) 기준')
     metro_en = metro_ko = ''
     if uses_oecd:
         # Name the metric here rather than trusting the opener. The metro-area
@@ -1630,7 +1779,8 @@ def compose(sel, pool):
 LINK_DOMAINS = [('data.seoul.go.kr', 'https://data.seoul.go.kr'),
                 ('kosis.kr', 'https://kosis.kr'),
                 (OECD_DOMAIN, f'https://{OECD_DOMAIN}'),
-                ('rt.molit.go.kr', 'https://rt.molit.go.kr')]
+                ('rt.molit.go.kr', 'https://rt.molit.go.kr'),
+                ('data.kma.go.kr', 'https://data.kma.go.kr')]
 
 
 def add_tags(tb, body, extra=None):
@@ -1720,7 +1870,7 @@ def main():
     config = json.loads(CONFIG.read_text())
     api_key = config['api_key']
     kosis_key = config.get('kosis_key')
-    molit_key = config.get('data_go_kr_key')
+    gov_key = config.get('data_go_kr_key')
     state = json.loads(STATE.read_text()) if STATE.exists() else {}
 
     # One post in SPOTLIGHT_EVERY, on average, drills into one place instead of
@@ -1761,7 +1911,7 @@ def main():
     state.pop('last_spotlight', None)
 
     if not want_spotlight:
-        pool = build_pool(api_key, state, kosis_key, molit_key)
+        pool = build_pool(api_key, state, kosis_key, gov_key)
         if len(pool) < 5:
             sys.exit(f'Pool too small ({len(pool)} facts) — data sources may be down.')
 
