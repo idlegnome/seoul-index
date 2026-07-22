@@ -215,6 +215,9 @@ OPENERS = [
     ('The apartment market, one month', '한 달의 아파트 시장'),
     ('Fifty years apart', '50년의 간격'),
     ('Seoul, yesterday', '어제의 서울'),
+    ('Through Gimpo airport', '김포공항에서'),
+    ("A year in Seoul's clinics", '서울 진료실의 1년'),
+    ("A year at Seoul's museums", '서울 박물관의 1년'),
     ('Green space per person', '1인당 녹지 면적'),
     ('Within a five-minute walk of transit', '도보 5분 내 대중교통'),
     ('Summer nights, hotter than the countryside', '여름밤, 도시가 더 더운 만큼'),
@@ -1112,6 +1115,261 @@ def kma_facts(key):
     return facts
 
 
+# --- Gimpo airport (Korea Airports Corporation) ----------------------------
+# 한국공항공사's monthly transport statistics via data.go.kr (자동승인,
+# approved 22 Jul 2026). One row per airport per month; the bot reads the
+# 김포 row — Seoul's airport — and nothing else. A month publishes from the
+# 5th business day of the next; records run from 2006, so the then-and-now
+# device here spans twenty years, not weather's fifty. The 국내선/국제선
+# split comes from the routeBe filter — each side is a published row, never
+# a subtraction.
+
+KAC_BASE = ('http://apis.data.go.kr/B551178/airport-transport-stats/info'
+            '?serviceKey={key}&startDePd={ym}&endDePd={ym}{extra}')
+KAC_YEARS_BACK = 20
+
+
+def _kac_month(key, y, m, route=None):
+    """김포's row for one month as {'pax': int, 'flights': int}, or None."""
+    extra = f'&routeBe={route}' if route is not None else ''
+    url = KAC_BASE.format(key=key, ym=f'{y}{m:02d}', extra=extra)
+    r = subprocess.run(['curl', '-s', '--max-time', '30', '-A', MOLIT_UA, url],
+                       capture_output=True, text=True)
+    try:
+        root = ET.fromstring(r.stdout)
+    except ET.ParseError:
+        return None
+    for it in root.iter('item'):
+        if (it.findtext('Airport') or '').strip() == '김포':
+            try:
+                return {'pax': int(float(it.findtext('subpassenger'))),
+                        'flights': int(float(it.findtext('Subflgt')))}
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def kac_facts(key):
+    """Gimpo's newest published month, its twenty-years-ago shadow, and the
+    domestic/international split."""
+    if not key:
+        return []
+    today = datetime.now(SEOUL_TZ).date()
+    # Newest published month: last month from the ~5th business day, the
+    # month before until then.
+    m_first = today.replace(day=1)
+    now = None
+    for _ in range(2):
+        m_first = (m_first - timedelta(days=1)).replace(day=1)
+        now = _kac_month(key, m_first.year, m_first.month)
+        if now:
+            break
+    if not now:
+        return []
+    y, m = m_first.year, m_first.month
+    mon_en = MONTHS_EN[m - 1]
+    facts = [fact('kac_pax_now', 'airport',
+                  f'Passengers through Gimpo, {mon_en} {y}',
+                  grouped(now['pax']), grouped(now['pax']), pair='gimpo_then',
+                  pin=True, label_ko=f'김포공항 이용객, {y}년 {m}월'),
+             fact('kac_flights_now', 'airport',
+                  f'Flights in and out, {mon_en} {y}',
+                  grouped(now['flights']), grouped(now['flights']),
+                  pin=True, label_ko=f'운항 편수, {y}년 {m}월')]
+    then = _kac_month(key, y - KAC_YEARS_BACK, m)
+    if then:
+        facts.append(fact('kac_pax_then', 'airport',
+                          f'Passengers through Gimpo, {mon_en} {y - KAC_YEARS_BACK}',
+                          grouped(then['pax']), grouped(then['pax']),
+                          pair='gimpo_then', pin=True,
+                          label_ko=f'김포공항 이용객, {y - KAC_YEARS_BACK}년 {m}월'))
+    dom = _kac_month(key, y, m, route=0)
+    intl = _kac_month(key, y, m, route=1)
+    if dom and intl:
+        for fid, row, en, ko in (
+                ('kac_dom', dom, 'Domestic passengers', '국내선 이용객'),
+                ('kac_intl', intl, 'International passengers', '국제선 이용객')):
+            facts.append(fact(fid, 'airport', f'{en}, {mon_en} {y}',
+                              grouped(row['pax']), grouped(row['pax']),
+                              pair='gimpo_split', pin=True,
+                              label_ko=f'{ko}, {y}년 {m}월'))
+    return facts
+
+
+# --- a year in the clinics (HIRA) ------------------------------------------
+# 건강보험심사평가원's per-disease statistics via data.go.kr (자동승인,
+# approved 22 Jul 2026): patients per 3-character KCD code per 시도, from
+# adjudicated health-insurance claims. Two provisos, both on the card
+# footnote: the region is where the INSTITUTION is, not where the patient
+# lives, and the counts are insurance claims only. The year is the newest
+# COMPLETE published care year (today - 2): the API answers for later years,
+# but their semantics are unverified and their figures may still be growing.
+#
+# The conditions are curated for recognisability AND for surviving a
+# playful adjacency: androgenic alopecia was cut because insurance treats
+# so little hair loss that the true figure (9,413 in 2024) reads as wrong
+# to anyone who knows Seoul — the avgbill lesson again.
+
+HIRA_BASE = ('http://apis.data.go.kr/B551182/diseaseInfoService1/'
+             'getDissByAreaStats1?serviceKey={key}&year={year}&sickType=1'
+             '&medTp=1&sickCd={code}&numOfRows=30&pageNo=1')
+
+HEALTH_CONDS = [   # (3-char KCD, EN gloss, KO gloss)
+    ('J00', 'The common cold', '감기'),
+    ('J30', 'Allergic rhinitis', '알레르기 비염'),
+    ('I10', 'High blood pressure', '고혈압'),
+    ('K02', 'Tooth decay', '충치'),
+    ('E11', 'Type 2 diabetes', '2형 당뇨병'),
+    ('H52', 'Refractive eye problems', '굴절 이상(근시·원시)'),
+    ('G47', 'Sleep disorders', '수면장애'),
+    ('M10', 'Gout', '통풍'),
+]
+
+# Set by hira_facts() so compose() can put the claims year on the card.
+HEALTH_Y = {'y': None}
+
+
+def hira_facts(key):
+    """Patient counts at Seoul institutions, one condition per line."""
+    if not key:
+        return []
+    year = datetime.now(SEOUL_TZ).year - 2
+    got = []
+    for code, en, ko in HEALTH_CONDS:
+        url = HIRA_BASE.format(key=key, year=year, code=code)
+        r = subprocess.run(['curl', '-s', '--max-time', '30', '-A', MOLIT_UA,
+                            url], capture_output=True, text=True)
+        try:
+            root = ET.fromstring(r.stdout)
+        except ET.ParseError:
+            continue
+        for it in root.iter('item'):
+            if (it.findtext('lcName') or '').strip() == '서울':
+                try:
+                    got.append((code, en, ko, int(it.findtext('ptntCnt'))))
+                except (TypeError, ValueError):
+                    pass
+                break
+    if len(got) < 3:
+        return []
+    HEALTH_Y['y'] = year
+    facts = [fact(f'sick_{code}', 'health', en, grouped(n), grouped(n),
+                  label_ko=ko)
+             for code, en, ko, n in got]
+    # Same detectors as the sales vein: any two conditions within 2% are a
+    # dead heat, and the widest spread is a gap pair.
+    best = None
+    for i in range(len(got)):
+        for j in range(i + 1, len(got)):
+            a, b = got[i][3], got[j][3]
+            gap = abs(a - b) / max(a, b)
+            if gap <= 0.02 and (best is None or gap < best[0]):
+                best = (gap, got[i], got[j])
+    if best:
+        for code, en, ko, n in (best[1], best[2]):
+            facts.append(fact(f'sickheat_{code}', 'health', en,
+                              grouped(n), grouped(n), pair='sick_heat',
+                              label_ko=ko))
+    hi = max(got, key=lambda t: t[3])
+    lo = min(got, key=lambda t: t[3])
+    if hi[3] and lo[3] and hi[3] / max(lo[3], 1) >= 3:
+        for code, en, ko, n in (hi, lo):
+            facts.append(fact(f'sickgap_{code}', 'health', en,
+                              grouped(n), grouped(n), pair='sick_gap',
+                              label_ko=ko))
+    return facts
+
+
+# --- museums and galleries (문화기반시설총람) --------------------------------
+# 문화체육관광부's annual culture-facility survey, served by 한국문화정보원
+# via data.go.kr (자동승인, approved 22 Jul 2026). Per-facility rows carry
+# the year's visitor total (fyerVwngNope), so the busiest houses are
+# published rows and the city counts are counting. The survey year lags:
+# the 2024 edition carries 2023 figures, which the card footnote says.
+
+CULTURE_BASE = ('http://apis.data.go.kr/B553457/rgnCltrFcltExmnv1/{op}'
+                '?serviceKey={key}&pblshYr={yr}&numOfRows=2000&pageNo=1'
+                '&resultType=json')
+
+# Official English names for the houses likely to top the tables. An
+# unmapped name falls back to Korean with a warning, same as en_name().
+CULTURE_EN = {
+    '국립중앙박물관': 'the National Museum of Korea',
+    '전쟁기념관': 'the War Memorial of Korea',
+    '국립민속박물관': 'the National Folk Museum',
+    '국립고궁박물관': 'the National Palace Museum',
+    '석조전 대한제국역사관': 'Seokjojeon Hall',
+    '서울역사박물관': 'the Seoul Museum of History',
+    '서울시립미술관': 'the Seoul Museum of Art',
+    '국립현대미술관(서울관)': 'MMCA Seoul',
+    '리움미술관': 'the Leeum Museum of Art',
+    '한가람미술관': 'the Hangaram Art Museum',
+}
+
+# Set by culture_facts() so compose() can put the survey year on the card.
+CULTURE_Y = {'y': None}
+
+
+def _culture_rows(key, op, yr):
+    """One facility table's Seoul rows (시군구 codes 11xxx)."""
+    url = CULTURE_BASE.format(op=op, key=key, yr=yr)
+    r = subprocess.run(['curl', '-s', '--max-time', '60', '-A', MOLIT_UA, url],
+                       capture_output=True, text=True)
+    try:
+        rows = json.loads(r.stdout)['response']['body']['data']
+    except (ValueError, KeyError, TypeError):
+        return []
+    return [x for x in rows if str(x.get('sggCd', '')).startswith('11')]
+
+
+def _culture_top(rows, name_field):
+    """The most-visited facility as (korean_name, visitors), or None."""
+    best = max(rows, key=lambda x: x.get('fyerVwngNope') or 0, default=None)
+    if not best or not best.get('fyerVwngNope'):
+        return None
+    return (best.get(name_field) or '').strip(), int(best['fyerVwngNope'])
+
+
+def culture_facts(key):
+    """Seoul's museums and galleries: the counts, and the busiest houses."""
+    if not key:
+        return []
+    this_year = datetime.now(SEOUL_TZ).year
+    museums = []
+    for yr in (this_year, this_year - 1, this_year - 2):
+        museums = _culture_rows(key, 'clifMsmv1', yr)
+        if museums:
+            break
+    if not museums:
+        return []
+    galleries = _culture_rows(key, 'clifArglv1', yr)
+    crtr = str(museums[0].get('crtrYr') or yr - 1)
+    CULTURE_Y['y'] = crtr
+    facts = [fact('culture_msm_n', 'culture', 'Museums in Seoul',
+                  grouped(len(museums)), grouped(len(museums)),
+                  pair='culture_count', label_ko='서울의 박물관 수')]
+    if galleries:
+        facts.append(fact('culture_argl_n', 'culture', 'Art galleries in Seoul',
+                          grouped(len(galleries)), grouped(len(galleries)),
+                          pair='culture_count', label_ko='서울의 미술관 수'))
+    for fid, rows, field, ko_kind in (
+            ('culture_top_msm', museums, 'msmNm', '박물관'),
+            ('culture_top_argl', galleries, 'arglNm', '미술관')):
+        top = _culture_top(rows, field)
+        if not top:
+            continue
+        ko_name, n = top
+        en = CULTURE_EN.get(ko_name)
+        if not en:
+            print(f'Warning: no English name for {ko_name!r} — '
+                  f'using Korean on the English card.')
+            en = ko_name
+        facts.append(fact(fid, 'culture', f"A year's visitors to {en}",
+                          grouped(n), grouped(n), pair='top_house', pin=True,
+                          label_ko=f'{ko_name} 연간 관람객'))
+    return facts
+
+
 def _url(s):
     from urllib.parse import quote
     return quote(s)
@@ -1313,7 +1571,7 @@ def world_facts():
 
 def build_pool(api_key, state, kosis_key=None, gov_key=None):
     # gov_key is the shared data.go.kr key: one key, per-API 활용신청, so the
-    # property and weather veins both ride on it.
+    # property, weather, airport, health and culture veins all ride on it.
     pool = []
     pool += crowd_facts(api_key, crowd_window(state))
     pool += air_facts(api_key)
@@ -1324,6 +1582,14 @@ def build_pool(api_key, state, kosis_key=None, gov_key=None):
     pool += world_facts()
     pool += molit_facts(gov_key)
     pool += kma_facts(gov_key)
+    pool += kac_facts(gov_key)
+    pool += hira_facts(gov_key)
+    pool += culture_facts(gov_key)
+    # TODO tourism vein (관광자원통계, approved 22 Jul 2026): the
+    # openapi.tour.go.kr gateway had not yet registered the key that day
+    # ("SERVICE KEY IS NOT REGISTERED"). Once a probe returns rows, build
+    # the harvester against them — monthly per-attraction visitor counts
+    # with a 내국인/외국인 split, params YM/SIDO/GUNGU, 1,000 calls/day.
     return pool
 
 
@@ -1344,6 +1610,7 @@ Rules:
 - "world" lines set Seoul's metro area against other cities' metro areas, from the OECD. Their labels are BARE CITY NAMES, so the opener MUST say what is being measured (e.g. "Green space per person", "Within a five-minute walk of transit") — this is the one case where the opener names the metric. Build them into their own post: every world line in a post must come from the SAME pair (all city_green, or all city_transit, never a mix), and a world line NEVER appears alongside a Seoul-only line of any other category. Always include the Seoul line.
 - "property" lines are one month's apartment-market filings from the national land ministry: actual sale prices (the dearest and cheapest single sales), a record jeonse deposit, and counts of filings. Build them into their own post — never alongside a live "right now" line, a spending line, a national line or a world line. The pairs are the point: the price gap (dearest vs cheapest sale) or the jeonse/monthly-rent split. Never put a month or date in a property label — the filing month rides on the card automatically.
 - "weather" lines are published readings from Seoul's official weather station: yesterday's high/low/rain, and the last full month set against the SAME month FIFTY YEARS earlier (each label already carries its month and year — do not reword those labels). Build them into their own post, never mixed with any other category, and pick ONE frame: either the yesterday set, or the then-and-now set. In a then-and-now post every pair must keep BOTH its sides, every pair must put its two years in the SAME order, and the arrangement carries the half-century — never point it out.
+- "airport", "health" and "culture" lines are single-source sets like "property" and "weather": each builds its OWN post, never mixed with another category. An airport post is Gimpo's newest month — pick ONE frame, the twenty-year pair or the domestic/international split (labels carry their months). A health post is patient counts at Seoul care institutions in one year: the labels are bare condition names, so the opener must carry the "a year in Seoul's clinics" framing. These are real illnesses — arrange the numbers, never joke about them, and drop any set that reads as a punchline at patients' expense. A culture post is the city's museums and galleries: the counts and the year's most-visited houses.
 - Keep the opener neutral (a time or place framing), EXCEPT on a world post, where it must name the metric as described above. Pick one from OPENERS, or write a short neutral one (max ~5 words) — it must NOT give away or hint at the pairing. Provide it in English and Korean.
 - You may lightly reword an English label for wit, but keep its meaning and DO NOT put any digit in a label.
 - Translate every chosen label to natural Korean (labels only — never restate the number in the label).
@@ -1648,17 +1915,26 @@ def compose(sel, pool):
 
     # Source line credits every distinct source used. Seoul Open Data covers
     # everything except the KOSIS 'national' figures, which get their own credit.
-    uses_seoul = any(c not in ('national', 'world', 'property', 'weather')
-                     for c in cats)
+    # Categories whose figures come from a publisher other than Seoul Open
+    # Data; anything outside this set is credited to data.seoul.go.kr.
+    non_seoul = {'national', 'world', 'property', 'weather', 'airport',
+                 'health', 'culture'}
+    uses_seoul = any(c not in non_seoul for c in cats)
     uses_kosis = 'national' in cats
     uses_oecd = 'world' in cats
     uses_molit = 'property' in cats
     uses_kma = 'weather' in cats
+    uses_kac = 'airport' in cats
+    uses_hira = 'health' in cats
+    uses_mcst = 'culture' in cats
     srcs = (['data.seoul.go.kr'] if uses_seoul else []) + \
            (['kosis.kr'] if uses_kosis else []) + \
            ([OECD_DOMAIN] if uses_oecd else []) + \
            (['rt.molit.go.kr'] if uses_molit else []) + \
-           (['data.kma.go.kr'] if uses_kma else [])
+           (['data.kma.go.kr'] if uses_kma else []) + \
+           (['airport.co.kr'] if uses_kac else []) + \
+           (['opendata.hira.or.kr'] if uses_hira else []) + \
+           (['mcst.go.kr'] if uses_mcst else [])
     if not srcs:
         srcs = ['data.seoul.go.kr']
     joined = ', '.join(srcs)
@@ -1695,6 +1971,25 @@ def compose(sel, pool):
         src_ko += ' · 기상청'
         scope_en.append('Official Seoul station (108)')
         scope_ko.append('서울 대표 관측소(108) 기준')
+    if uses_kac:
+        src_en += ' · Korea Airports Corporation'
+        src_ko += ' · 한국공항공사'
+    if uses_hira:
+        # Both provisos are keys to the figures: the region is where the
+        # institution is, and the counts are insurance claims.
+        src_en += ' · HIRA'
+        src_ko += ' · 건강보험심사평가원'
+        if HEALTH_Y['y']:
+            scope_en.append(f'Insured patients at Seoul institutions, '
+                            f'{HEALTH_Y["y"]}')
+            scope_ko.append(f'서울 소재 요양기관 건강보험 환자 수, '
+                            f'{HEALTH_Y["y"]}년')
+    if uses_mcst:
+        src_en += ' · MCST'
+        src_ko += ' · 문화체육관광부'
+        if CULTURE_Y['y']:
+            scope_en.append(f'Culture-facility survey, {CULTURE_Y["y"]} figures')
+            scope_ko.append(f'문화기반시설총람, {CULTURE_Y["y"]}년 기준')
     metro_en = metro_ko = ''
     if uses_oecd:
         # Name the metric here rather than trusting the opener. The metro-area
@@ -1780,7 +2075,10 @@ LINK_DOMAINS = [('data.seoul.go.kr', 'https://data.seoul.go.kr'),
                 ('kosis.kr', 'https://kosis.kr'),
                 (OECD_DOMAIN, f'https://{OECD_DOMAIN}'),
                 ('rt.molit.go.kr', 'https://rt.molit.go.kr'),
-                ('data.kma.go.kr', 'https://data.kma.go.kr')]
+                ('data.kma.go.kr', 'https://data.kma.go.kr'),
+                ('airport.co.kr', 'https://www.airport.co.kr'),
+                ('opendata.hira.or.kr', 'https://opendata.hira.or.kr'),
+                ('mcst.go.kr', 'https://www.mcst.go.kr')]
 
 
 def add_tags(tb, body, extra=None):
