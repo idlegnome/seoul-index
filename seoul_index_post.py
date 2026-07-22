@@ -1660,6 +1660,25 @@ def add_tags(tb, body, extra=None):
     return tb
 
 
+def card_caption(lang):
+    """One dated line above a card post, with hashtag facets. Card posts used
+    to carry no text at all, which kept the image first but left the
+    top-level post with nothing searchable and no text identity in the feed
+    (the tags lived only in the source replies). One line keeps the card
+    dominant while giving the post itself a name, a date and the tags."""
+    now = datetime.now(SEOUL_TZ)
+    if lang == 'en':
+        head = f'📊 The Seoul Index · {now.day} {MONTHS_EN[now.month - 1]}\n'
+    else:
+        head = f'📊 숫자로 보는 서울 · {now.month}월 {now.day}일\n'
+    tb = client_utils.TextBuilder().text(head)
+    for i, (tag, label) in enumerate(TAGS):
+        if i:
+            tb.text(' ')
+        tb.tag(f'#{tag}', label)
+    return tb
+
+
 # --- card rendering --------------------------------------------------------
 
 def _card_payload(c, lang):
@@ -1814,6 +1833,8 @@ def main():
 
     if DRY_RUN:
         if cards:
+            print(f'\nEN card caption: {card_caption("en").build_text()!r}'
+                  f'\nKO card caption: {card_caption("ko").build_text()!r}')
             print(f'\n(dry run — wrote {out_dir}/card_en.png and card_ko.png, not posting)')
         else:
             print('\n(dry run — not posting)')
@@ -1831,15 +1852,16 @@ def main():
         def _reply(parent_ref, root_ref):
             return models.AppBskyFeedPost.ReplyRef(parent=parent_ref, root=root_ref)
 
-        # 4-post chain: EN card → EN source → KO card → KO source. Cards carry no
-        # text so the image is first; each source reply carries the clickable
-        # link + tags. Every reply's root stays the first (EN card) post.
-        p1 = bsky.send_image(text='', image=en_bytes, image_alt=en_alt,
+        # 4-post chain: EN card → EN source → KO card → KO source. Card posts
+        # carry a one-line dated caption + tags (see card_caption); each source
+        # reply carries the clickable link + tags. Every reply's root stays the
+        # first (EN card) post.
+        p1 = bsky.send_image(text=card_caption('en'), image=en_bytes, image_alt=en_alt,
                              langs=['en'], image_aspect_ratio=en_ar)
         root_ref = models.create_strong_ref(p1)
         p2 = bsky.send_post(text=en_source, reply_to=_reply(root_ref, root_ref), langs=['en'])
         p2_ref = models.create_strong_ref(p2)
-        p3 = bsky.send_image(text='', image=ko_bytes, image_alt=ko_alt,
+        p3 = bsky.send_image(text=card_caption('ko'), image=ko_bytes, image_alt=ko_alt,
                              reply_to=_reply(p2_ref, root_ref), langs=['ko'],
                              image_aspect_ratio=ko_ar)
         p3_ref = models.create_strong_ref(p3)
