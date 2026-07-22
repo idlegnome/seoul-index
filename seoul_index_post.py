@@ -37,6 +37,7 @@ import csv
 import io
 import json
 import os
+import random
 import re
 import subprocess
 import sys
@@ -161,15 +162,17 @@ CROWD_SPOTS = [
      'wiki_ko': 'https://ko.wikipedia.org/wiki/%EB%A1%AF%EB%8D%B0%EC%9B%94%EB%93%9C%ED%83%80%EC%9B%8C'},
 ]
 
-# One post in every SPOTLIGHT_EVERY drills into a single place instead of
-# setting places against each other.
+# One post in every SPOTLIGHT_EVERY, on average, drills into a single place
+# instead of setting places against each other. Chosen by coin flip rather
+# than a fixed cadence (see main()), so the spotlight does not land in the
+# same slot every day.
 SPOTLIGHT_EVERY = 3
 
 # The world vein is a quarter of the pool and holds the widest gaps in it
 # (Seoul's density is 4x Amsterdam's), so the selector reaches for it whenever
 # it is offered. It therefore gets a cooldown the other categories do not need:
 # after a world post, world facts leave the pool entirely until this many days
-# have passed. At two posts a day, 3 days is about one world card in six.
+# have passed. At three posts a day, 3 days is about one world card in nine.
 WORLD_COOLDOWN_DAYS = 3
 
 # Rotating openers offered to the selector (it may also write its own). Kept
@@ -1450,13 +1453,20 @@ def main():
     kosis_key = config.get('kosis_key')
     state = json.loads(STATE.read_text()) if STATE.exists() else {}
 
-    # Every SPOTLIGHT_EVERY-th post drills into one place instead of setting
-    # places against each other, cycling through the curated spots. These are
-    # interspersed with the usual index cards, not a replacement for them, and a
-    # place that does not answer with enough lines simply falls back to one.
+    # One post in SPOTLIGHT_EVERY, on average, drills into one place instead of
+    # setting places against each other, cycling through the curated spots.
+    # These are interspersed with the usual index cards, not a replacement for
+    # them, and a place that does not answer with enough lines simply falls
+    # back to one. Chosen by coin flip, not post_n % N: a fixed cadence puts
+    # the spotlight in the same clock slot every day once the posting schedule
+    # is a multiple of N. A 1/(N-1) chance after each non-spotlight post, with
+    # back-to-back spotlights barred, works out to the same 1-in-N long-run
+    # rate without the rhythm.
     post_n = int(state.get('post_n', 0)) + 1
     state['post_n'] = post_n
-    want_spotlight = FORCE_SPOTLIGHT or post_n % SPOTLIGHT_EVERY == 0
+    want_spotlight = FORCE_SPOTLIGHT or (
+        not state.get('last_spotlight')
+        and random.random() < 1 / (SPOTLIGHT_EVERY - 1))
     if want_spotlight:
         i = int(state.get('spotlight_i', 0))
         spot = CROWD_SPOTS[i % len(CROWD_SPOTS)]
@@ -1469,6 +1479,10 @@ def main():
         else:
             print(f'Spotlight on {spot["en"]} returned too little; normal index instead.')
             want_spotlight = False
+
+    # Remembered so the coin flip above can bar back-to-back spotlights. A
+    # spotlight that fell back to a normal card counts as normal.
+    state['last_spotlight'] = want_spotlight
 
     if not want_spotlight:
         pool = build_pool(api_key, state, kosis_key)

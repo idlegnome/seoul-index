@@ -17,7 +17,7 @@ The account is written by A.I. and says so in its profile. This repository is pu
 
 ## Two kinds of card
 
-Most posts set things against each other across the city. Every third post instead drills into **one place read along a clock** — the crowd right now, what that place is usually like at this hour on this weekday, and the busiest and quietest hours ahead — cycling through the curated spots. These are interspersed with the ordinary index cards, not a replacement for them, and a place that does not answer with enough lines falls back to a normal post.
+Most posts set things against each other across the city. One post in three, on average (a coin flip, never two in a row, rather than a fixed cadence), instead drills into **one place read along a clock** — the crowd right now, what that place is usually like at this hour on this weekday, and the busiest and quietest hours ahead — cycling through the curated spots. These are interspersed with the ordinary index cards, not a replacement for them, and a place that does not answer with enough lines falls back to a normal post.
 
 The spotlight card needs no `claude -p` call: its lines are fixed and in order, and their labels carry clock times, which are numbers Python does not hand over to be reworded or translated. Its opener names the place in both languages from the curated list.
 
@@ -92,7 +92,7 @@ python3 seoul_index_post.py --dry-run   # harvest, select, compose and print, no
 python3 seoul_index_post.py             # post one index (English + Korean card thread)
 ```
 
-The live account posts twice a day (12:30 p.m. and 8:30 p.m. KST) via `launchd`, with the crowd sampler running hourly from 05:00 to 23:00 and the sales scan monthly (the sales data is quarterly, so a weekly scan was recomputing a figure that moves four times a year).
+The live account posts three times a day (8:30 a.m., 12:30 p.m. and 8:30 p.m. KST) via `launchd`, with the crowd sampler running hourly from 05:00 to 23:00 and the sales scan monthly (the sales data is quarterly, so a weekly scan was recomputing a figure that moves four times a year).
 
 ## Licence
 
