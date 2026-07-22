@@ -22,3 +22,4 @@ __pycache__/
 
 # Accumulated crowd readings (cannot be re-fetched, but local to each machine)
 crowd_history.jsonl
+crowd_history.jsonl.bak-*
