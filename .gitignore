@@ -30,4 +30,3 @@ crowd_history.jsonl.bak-*
 
 # Single-run lock held by seoul_index_post.py for the length of a run
 .post.lock
-.post.lock

@@ -34,6 +34,7 @@ Usage:
 """
 
 import csv
+import fcntl
 import io
 import json
 import os
@@ -1683,6 +1684,20 @@ def render_pair(c, out_dir):
 # --- main ------------------------------------------------------------------
 
 def main():
+    # One run at a time. launchd fires a slot the machine slept through as
+    # soon as it wakes, which can land right beside the next scheduled
+    # firing; two interleaved runs then race over the state file, and the
+    # loser's stale state overwrites the winner's. The lock is held for the
+    # whole run (the fd must stay referenced); a second instance bows out.
+    lock = open(HERE / '.post.lock', 'w')
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        sys.exit('Another seoul_index_post run is in progress; bowing out.')
+    # Timestamp every run: the log had none, which made the back-to-back
+    # spotlight incident of 22 Jul 2026 needlessly hard to reconstruct.
+    print(f'--- run at {datetime.now(SEOUL_TZ):%Y-%m-%d %H:%M:%S} KST ---')
+
     config = json.loads(CONFIG.read_text())
     api_key = config['api_key']
     kosis_key = config.get('kosis_key')
@@ -1700,8 +1715,13 @@ def main():
     # rate without the rhythm.
     post_n = int(state.get('post_n', 0)) + 1
     state['post_n'] = post_n
+    # A category never repeats, and the spotlight is a category like any
+    # other. The bar reads last_cat — the record of what the previous post
+    # actually WAS — not a separate boolean: a duplicate flag can fall out
+    # of step with the record it shadows, and on 22 Jul 2026 it did, putting
+    # two spotlights back to back.
     want_spotlight = FORCE_SPOTLIGHT or (
-        not state.get('last_spotlight')
+        state.get('last_cat') != 'spotlight'
         and random.random() < 1 / (SPOTLIGHT_EVERY - 1))
     if want_spotlight:
         i = int(state.get('spotlight_i', 0))
@@ -1716,9 +1736,10 @@ def main():
             print(f'Spotlight on {spot["en"]} returned too little; normal index instead.')
             want_spotlight = False
 
-    # Remembered so the coin flip above can bar back-to-back spotlights. A
-    # spotlight that fell back to a normal card counts as normal.
-    state['last_spotlight'] = want_spotlight
+    # last_cat, written after posting, is the single record of what this
+    # post was (a spotlight that fell back to a normal card records its
+    # normal category). The old last_spotlight boolean is retired.
+    state.pop('last_spotlight', None)
 
     if not want_spotlight:
         pool = build_pool(api_key, state, kosis_key, molit_key)
