@@ -70,13 +70,16 @@ CLAUDE_TIMEOUT = 300
 
 # Refuse anything unrecognised: with membership tests instead of argparse, an
 # unknown flag would silently run LIVE (`--help` published a real thread on
-# 20 Jul 2026). Fail before doing anything at all.
+# 20 Jul 2026). Fail before doing anything at all — but only when THIS file is
+# the program being run: importers (seoul_index_methodology.py) have their own
+# flags, and validating their argv here rejected `--pin` on 23 Jul 2026.
 _KNOWN_ARGS = {'--dry-run', '--spotlight'}
-_unknown = [a for a in sys.argv[1:] if a not in _KNOWN_ARGS]
-if _unknown:
-    sys.exit(f'Unknown argument(s): {" ".join(_unknown)}. '
-             f'Recognised: {" ".join(sorted(_KNOWN_ARGS))}. '
-             f'Refusing to run (a bare run posts live).')
+if __name__ == '__main__':
+    _unknown = [a for a in sys.argv[1:] if a not in _KNOWN_ARGS]
+    if _unknown:
+        sys.exit(f'Unknown argument(s): {" ".join(_unknown)}. '
+                 f'Recognised: {" ".join(sorted(_KNOWN_ARGS))}. '
+                 f'Refusing to run (a bare run posts live).')
 
 DRY_RUN = '--dry-run' in sys.argv
 FORCE_SPOTLIGHT = '--spotlight' in sys.argv   # for testing the single-place card
