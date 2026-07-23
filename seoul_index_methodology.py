@@ -58,12 +58,16 @@ KO_INTRO = ('‘숫자로 보는 서울’은 '
             '수치는 공개된 값 그대로입니다. '
             '숫자는 서울시의 데이터 그대로이고, '
             '조합과 글쓰기는 대부분 A.I.가 합니다.')
+# The original plaintext thread signed off "🤖 자동 계정"; the card era
+# dropped the emoji but stranded "자동 계정" as a cut-off-looking fragment.
+# Dropped entirely (23 Jul 2026): the EN card has no equivalent line and
+# the account is already visibly a bot.
 KO_CAVEAT = ('‘인구’ 수치(특정 장소의 '
              '실시간 인구, 연령·성별, 방문객 '
              '비율)는 실측이 아니라 KT가 통신 '
              '신호로 추정해 전체 인구로 보정한 '
              '값입니다. 20~50대 구간이 가장 '
-             '정확합니다. 자동 계정')
+             '정확합니다.')
 # City comparisons are a third kind of figure: a different publisher, and a
 # different Seoul. The OECD reports functional urban areas, so its Seoul is the
 # capital region, not the city the rest of the account counts. Saying so here is
