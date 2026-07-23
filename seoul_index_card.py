@@ -29,6 +29,7 @@ Raises CardRenderError on any failure so the poster can fall back to plaintext.
 """
 
 import html
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -56,8 +57,26 @@ class CardRenderError(RuntimeError):
     """Rendering failed — caller should fall back to a plaintext post."""
 
 
+def curly(s):
+    """Typographer's quotes: straight ' and " become curly. Applied to every
+    piece of card text via _esc (and to the alt/fallback bodies by the poster),
+    so it holds no matter where the text came from — the selector, a fixed
+    opener or the methodology prose."""
+    if not s:
+        return s or ''
+    s = re.sub(r"(?<=\w)'(?=\w)", '’', s)   # contractions: Seoul's
+    s = re.sub(r"'(?=\d\d)", '’', s)        # decade elision: '90s
+    s = re.sub(r"(?<=\w)'", '’', s)         # trailing possessive: palaces'
+    s = re.sub(r"'(?=\S)", '‘', s)          # opening single quote
+    s = s.replace("'", '’')                 # anything left closes
+    s = re.sub(r'(?<=\S)"(?=[\s.,;:!?)\]]|$)', '”', s)  # closing double
+    s = re.sub(r'"(?=\S)', '“', s)          # opening double
+    s = s.replace('"', '”')
+    return s
+
+
 def _esc(s):
-    return html.escape(s or '', quote=True)
+    return html.escape(curly(s), quote=True)
 
 
 def _row_html(line):

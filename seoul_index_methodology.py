@@ -31,7 +31,7 @@ from pathlib import Path
 
 from atproto import Client, client_utils, models
 
-from seoul_index_card import render_prose_card
+from seoul_index_card import render_prose_card, curly
 from seoul_index_post import CONFIG, KEYCHAIN_SERVICE, keychain_password
 import json
 
@@ -123,7 +123,8 @@ SOURCE_DOMAINS = [('data.seoul.go.kr', 'https://data.seoul.go.kr'),
 
 
 def _alt(card):
-    return card['heading'] + '\n\n' + '\n\n'.join(card['body'])
+    # curly() so the alt text matches the card, which the renderer curls.
+    return curly(card['heading'] + '\n\n' + '\n\n'.join(card['body']))
 
 
 def _source_tb():

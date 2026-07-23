@@ -51,7 +51,7 @@ from zoneinfo import ZoneInfo
 
 from atproto import Client, client_utils, models
 
-from seoul_index_card import render_card, CardRenderError
+from seoul_index_card import render_card, CardRenderError, curly
 
 HERE = Path(__file__).parent
 CONFIG = HERE / 'seoul_index_config.json'
@@ -2231,12 +2231,14 @@ def compose(sel, pool):
     tail_en = ''.join(f'{p}{a}' for p, a, _ in wiki_en)
     tail_ko = ''.join(f'{p}{a}' for p, a, _ in wiki_ko)
 
-    en_body = op_en + ':\n' + '\n'.join(
+    # curly() so the alt text / plaintext fallback matches the card, which the
+    # renderer curls via _esc.
+    en_body = curly(op_en + ':\n' + '\n'.join(
         _pl(l['emoji'], l['label_en'], l['value_en']) for l in lines) + (
-        f'\n{note_en}' if note_en else '') + '\n' + src_en + tail_en
-    ko_body = op_ko + ':\n' + '\n'.join(
+        f'\n{note_en}' if note_en else '') + '\n' + src_en + tail_en)
+    ko_body = curly(op_ko + ':\n' + '\n'.join(
         _pl(l['emoji'], l['label_ko'], l['value_ko']) for l in lines) + (
-        f'\n{note_ko}' if note_ko else '') + '\n' + src_ko + tail_ko
+        f'\n{note_ko}' if note_ko else '') + '\n' + src_ko + tail_ko)
 
     return {
         'opener': {'emoji': opener_emoji, 'en': opener_en, 'ko': opener_ko},
