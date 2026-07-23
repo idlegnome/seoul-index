@@ -1405,6 +1405,42 @@ TOUR_EN = {
     '서대문자연사박물관': 'the Seodaemun Museum of Natural History',
 }
 
+# Wikipedia articles for the whitelisted attractions, verified 23 Jul 2026:
+# every entry checked against both wikis (ko 종묘 is the Seoul shrine, not the
+# generic rite; en Seoul_Sky redirects to Lotte World Tower, whose observatory
+# it is). 아쿠아리움 is absent on purpose — the Lotte World Aquarium has no
+# standalone article on either wiki. The EN anchor is the plain article name
+# (no leading "the", unlike TOUR_EN); the KO anchor is the feed name itself.
+TOUR_WIKI = {
+    '경복궁': ('Gyeongbokgung',
+               'https://en.wikipedia.org/wiki/Gyeongbokgung',
+               'https://ko.wikipedia.org/wiki/%EA%B2%BD%EB%B3%B5%EA%B6%81'),
+    '창덕궁': ('Changdeokgung',
+               'https://en.wikipedia.org/wiki/Changdeokgung',
+               'https://ko.wikipedia.org/wiki/%EC%B0%BD%EB%8D%95%EA%B6%81'),
+    '창경궁': ('Changgyeonggung',
+               'https://en.wikipedia.org/wiki/Changgyeonggung',
+               'https://ko.wikipedia.org/wiki/%EC%B0%BD%EA%B2%BD%EA%B6%81'),
+    '덕수궁': ('Deoksugung',
+               'https://en.wikipedia.org/wiki/Deoksugung',
+               'https://ko.wikipedia.org/wiki/%EB%8D%95%EC%88%98%EA%B6%81'),
+    '종묘': ('Jongmyo',
+             'https://en.wikipedia.org/wiki/Jongmyo',
+             'https://ko.wikipedia.org/wiki/%EC%A2%85%EB%AC%98'),
+    '롯데월드': ('Lotte World',
+                 'https://en.wikipedia.org/wiki/Lotte_World',
+                 'https://ko.wikipedia.org/wiki/%EB%A1%AF%EB%8D%B0%EC%9B%94%EB%93%9C'),
+    '서울스카이': ('Seoul Sky',
+                   'https://en.wikipedia.org/wiki/Seoul_Sky',
+                   'https://ko.wikipedia.org/wiki/%EC%84%9C%EC%9A%B8%EC%8A%A4%EC%B9%B4%EC%9D%B4'),
+    '서대문형무소역사관': ('Seodaemun Prison History Hall',
+                           'https://en.wikipedia.org/wiki/Seodaemun_Prison_History_Hall',
+                           'https://ko.wikipedia.org/wiki/%EC%84%9C%EB%8C%80%EB%AC%B8%ED%98%95%EB%AC%B4%EC%86%8C%EC%97%AD%EC%82%AC%EA%B4%80'),
+    '서대문자연사박물관': ('Seodaemun Museum of Natural History',
+                           'https://en.wikipedia.org/wiki/Seodaemun_Museum_of_Natural_History',
+                           'https://ko.wikipedia.org/wiki/%EC%84%9C%EB%8C%80%EB%AC%B8%EC%9E%90%EC%97%B0%EC%82%AC%EB%B0%95%EB%AC%BC%EA%B4%80'),
+}
+
 # Set by tour_facts() so compose() can put the month on the card.
 TOUR_M = {'en': None, 'ko': None}
 
@@ -2165,12 +2201,32 @@ def compose(sel, pool):
         return f'{emoji} {label}: {value}' if emoji else f'{label}: {value}'
     op_en = f'{opener_emoji} {opener_en}' if opener_emoji else opener_en
     op_ko = f'{opener_emoji} {opener_ko}' if opener_emoji else opener_ko
-    # The trailing Wikipedia link is a real link in the posted reply, so it stays
-    # out of src_* (which add_tags renders as text) and is spelled out only in
-    # the plaintext body that serves as alt text and as the fallback post.
+    # The trailing Wikipedia links are real links in the posted reply, so they
+    # stay out of src_* (which add_tags renders as text) and are spelled out
+    # only in the plaintext body that serves as alt text and as the fallback
+    # post. Spotlights set a single (prefix, anchor, url) tuple; normalise to a
+    # list so tourism posts can carry one link per attraction.
     wiki_en, wiki_ko = sel.get('wiki_en'), sel.get('wiki_ko')
-    tail_en = f'{wiki_en[0]}{wiki_en[1]}' if wiki_en else ''
-    tail_ko = f'{wiki_ko[0]}{wiki_ko[1]}' if wiki_ko else ''
+    wiki_en = [wiki_en] if isinstance(wiki_en, tuple) else list(wiki_en or [])
+    wiki_ko = [wiki_ko] if isinstance(wiki_ko, tuple) else list(wiki_ko or [])
+    if uses_tour and not wiki_en:
+        # Every attraction on the card gets its article, in card (value) order.
+        # 아쿠아리움 has no article (see TOUR_WIKI) and is simply skipped.
+        seen = []
+        for p in picks:
+            f = by_id[p['id']]
+            ko_name = f['id'].split('_', 1)[1]
+            if f['cat'] == 'tourism' and ko_name in TOUR_WIKI \
+                    and ko_name not in seen:
+                seen.append(ko_name)
+        for i, ko_name in enumerate(seen):
+            en_anchor, en_url, ko_url = TOUR_WIKI[ko_name]
+            wiki_en.append((' · Wikipedia: ' if i == 0 else ', ',
+                            en_anchor, en_url))
+            wiki_ko.append((' · 위키백과: ' if i == 0 else ', ',
+                            ko_name, ko_url))
+    tail_en = ''.join(f'{p}{a}' for p, a, _ in wiki_en)
+    tail_ko = ''.join(f'{p}{a}' for p, a, _ in wiki_ko)
 
     en_body = op_en + ':\n' + '\n'.join(
         _pl(l['emoji'], l['label_en'], l['value_en']) for l in lines) + (
@@ -2202,8 +2258,9 @@ LINK_DOMAINS = [('data.seoul.go.kr', 'https://data.seoul.go.kr'),
 
 def add_tags(tb, body, extra=None):
     """Build the source reply: the body with its source domains hyperlinked,
-    then an optional trailing link (prefix, anchor, url) — used by spotlight
-    cards to point at the place's Wikipedia article — then the hashtags."""
+    then optional trailing links — a (prefix, anchor, url) tuple or a list of
+    them, used to point at Wikipedia articles (the spotlight's place, or every
+    attraction on a tourism card) — then the hashtags."""
     # Hyperlink every source domain that appears on the source line.
     hits = sorted((body.find(dom), dom, url) for dom, url in LINK_DOMAINS
                   if body.find(dom) != -1)
@@ -2215,9 +2272,9 @@ def add_tags(tb, body, extra=None):
         pos = i + len(dom)
     tb.text(body[pos:])
     if extra:
-        prefix, anchor, url = extra
-        tb.text(prefix)
-        tb.link(anchor, url)
+        for prefix, anchor, url in ([extra] if isinstance(extra, tuple) else extra):
+            tb.text(prefix)
+            tb.link(anchor, url)
     if TAGS:
         tb.text('\n')
         for i, (tag, label) in enumerate(TAGS):
