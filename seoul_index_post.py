@@ -2227,6 +2227,19 @@ def add_tags(tb, body, extra=None):
     return tb
 
 
+def tag_line():
+    """Tags-only caption for the card posts: just the hashtag facets, no
+    headline, so the card stays visually first but the top-level post is
+    still discoverable via the tags (which otherwise live only on the
+    source replies)."""
+    tb = client_utils.TextBuilder()
+    for i, (tag, label) in enumerate(TAGS):
+        if i:
+            tb.text(' ')
+        tb.tag(f'#{tag}', label)
+    return tb
+
+
 # --- card rendering --------------------------------------------------------
 
 def _card_payload(c, lang):
@@ -2381,6 +2394,7 @@ def main():
 
     if DRY_RUN:
         if cards:
+            print(f'\nCard caption (both langs): {tag_line().build_text()!r}')
             print(f'\n(dry run — wrote {out_dir}/card_en.png and card_ko.png, not posting)')
         else:
             print('\n(dry run — not posting)')
@@ -2398,15 +2412,16 @@ def main():
         def _reply(parent_ref, root_ref):
             return models.AppBskyFeedPost.ReplyRef(parent=parent_ref, root=root_ref)
 
-        # 4-post chain: EN card → EN source → KO card → KO source. Cards carry no
-        # text so the image is first; each source reply carries the clickable
-        # link + tags. Every reply's root stays the first (EN card) post.
-        p1 = bsky.send_image(text='', image=en_bytes, image_alt=en_alt,
+        # 4-post chain: EN card → EN source → KO card → KO source. Card posts
+        # carry only the hashtags (see tag_line) so the card stays visually
+        # first; each source reply carries the clickable link + tags. Every
+        # reply's root stays the first (EN card) post.
+        p1 = bsky.send_image(text=tag_line(), image=en_bytes, image_alt=en_alt,
                              langs=['en'], image_aspect_ratio=en_ar)
         root_ref = models.create_strong_ref(p1)
         p2 = bsky.send_post(text=en_source, reply_to=_reply(root_ref, root_ref), langs=['en'])
         p2_ref = models.create_strong_ref(p2)
-        p3 = bsky.send_image(text='', image=ko_bytes, image_alt=ko_alt,
+        p3 = bsky.send_image(text=tag_line(), image=ko_bytes, image_alt=ko_alt,
                              reply_to=_reply(p2_ref, root_ref), langs=['ko'],
                              image_aspect_ratio=ko_ar)
         p3_ref = models.create_strong_ref(p3)
