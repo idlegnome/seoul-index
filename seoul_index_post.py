@@ -218,6 +218,7 @@ OPENERS = [
     ('Through Gimpo airport', '김포공항에서'),
     ("A year in Seoul's clinics", '서울 진료실의 1년'),
     ("A year at Seoul's museums", '서울 박물관의 1년'),
+    ('Through the turnstiles', '개찰구를 지나서'),
     ('Green space per person', '1인당 녹지 면적'),
     ('Within a five-minute walk of transit', '도보 5분 내 대중교통'),
     ('Summer nights, hotter than the countryside', '여름밤, 도시가 더 더운 만큼'),
@@ -1370,6 +1371,116 @@ def culture_facts(key):
     return facts
 
 
+# --- through the turnstiles (관광자원통계) -----------------------------------
+# 한국문화관광연구원's monthly visitor counts for paid-admission sites, via
+# data.go.kr (자동승인, approved 22 Jul 2026; the openapi.tour.go.kr gateway
+# registered the key overnight, unlike the apis.data.go.kr veins which
+# unlocked in minutes). One row per attraction per month: csNatCnt Koreans,
+# csForCnt foreigners, csMvCnt the total. Publication runs MONTHS behind —
+# December 2025 was the newest month on 23 July 2026 — so the harvester
+# walks back from last month until rows appear, and the month rides on the
+# card footnote.
+#
+# The rows are curated to a whitelist of recognisable attractions with
+# official English names. That is not just naming: the December feed
+# carried a memorial hall with EIGHT visitors — a closure artefact in all
+# likelihood, and a punchline built on it would mislead (the avgbill
+# lesson). An unlisted attraction is simply not offered.
+
+TOUR_BASE = ('http://openapi.tour.go.kr/openapi/service/'
+             'TourismResourceStatsService/getPchrgTrrsrtVisitorList'
+             '?serviceKey={key}&YM={ym}&SIDO=%EC%84%9C%EC%9A%B8%ED%8A%B9'
+             '%EB%B3%84%EC%8B%9C&numOfRows=100&pageNo=1')
+
+TOUR_EN = {
+    '경복궁': 'Gyeongbokgung',
+    '창덕궁': 'Changdeokgung',
+    '창경궁': 'Changgyeonggung',
+    '덕수궁': 'Deoksugung',
+    '종묘': 'Jongmyo',
+    '롯데월드': 'Lotte World',
+    '서울스카이': 'Seoul Sky',
+    '아쿠아리움': 'the Lotte World Aquarium',
+    '서대문형무소역사관': 'Seodaemun Prison History Hall',
+    '서대문자연사박물관': 'the Seodaemun Museum of Natural History',
+}
+
+# Set by tour_facts() so compose() can put the month on the card.
+TOUR_M = {'en': None, 'ko': None}
+
+
+def tour_facts(key):
+    """One month through Seoul's turnstiles: total visitors per attraction,
+    and the foreigner counts as their own frame."""
+    if not key:
+        return []
+    first = datetime.now(SEOUL_TZ).date().replace(day=1)
+    items = []
+    for _ in range(12):
+        first = (first - timedelta(days=1)).replace(day=1)
+        url = TOUR_BASE.format(key=key, ym=f'{first:%Y%m}')
+        r = subprocess.run(['curl', '-s', '--max-time', '30', '-A', MOLIT_UA,
+                            url], capture_output=True, text=True)
+        try:
+            root = ET.fromstring(r.stdout)
+        except ET.ParseError:
+            return []
+        items = list(root.iter('item'))
+        if items:
+            break
+    if not items:
+        return []
+    TOUR_M['en'] = f'{MONTHS_EN[first.month - 1]} {first.year}'
+    TOUR_M['ko'] = f'{first.year}년 {first.month}월'
+    facts = []
+    totals = []
+    for it in items:
+        ko_name = (it.findtext('resNm') or '').strip()
+        en = TOUR_EN.get(ko_name)
+        if not en:
+            continue
+        def _n(tag, it=it):
+            try:
+                return int(it.findtext(tag))
+            except (TypeError, ValueError):
+                return None
+        total, forgn = _n('csMvCnt'), _n('csForCnt')
+        if total:
+            totals.append((ko_name, en, total))
+            facts.append(fact(f'tour_{ko_name}', 'tourism',
+                              f'Visitors to {en}',
+                              grouped(total), grouped(total)))
+        if forgn:
+            facts.append(fact(f'tourfor_{ko_name}', 'tourism',
+                              f'Foreign visitors to {en}',
+                              grouped(forgn), grouped(forgn),
+                              pair='tour_foreign'))
+    if len(totals) < 3:
+        return []
+    # The sales detectors again: near-equals are a dead heat, and the widest
+    # spread between two named attractions is a gap pair.
+    best = None
+    for i in range(len(totals)):
+        for j in range(i + 1, len(totals)):
+            a, b = totals[i][2], totals[j][2]
+            gap = abs(a - b) / max(a, b)
+            if gap <= 0.02 and (best is None or gap < best[0]):
+                best = (gap, totals[i], totals[j])
+    if best:
+        for ko_name, en, n in (best[1], best[2]):
+            facts.append(fact(f'tourheat_{ko_name}', 'tourism',
+                              f'Visitors to {en}', grouped(n), grouped(n),
+                              pair='tour_heat'))
+    hi = max(totals, key=lambda t: t[2])
+    lo = min(totals, key=lambda t: t[2])
+    if hi[2] and lo[2] and hi[2] / max(lo[2], 1) >= 3:
+        for ko_name, en, n in (hi, lo):
+            facts.append(fact(f'tourgap_{ko_name}', 'tourism',
+                              f'Visitors to {en}', grouped(n), grouped(n),
+                              pair='tour_gap'))
+    return facts
+
+
 def _url(s):
     from urllib.parse import quote
     return quote(s)
@@ -1585,11 +1696,7 @@ def build_pool(api_key, state, kosis_key=None, gov_key=None):
     pool += kac_facts(gov_key)
     pool += hira_facts(gov_key)
     pool += culture_facts(gov_key)
-    # TODO tourism vein (관광자원통계, approved 22 Jul 2026): the
-    # openapi.tour.go.kr gateway had not yet registered the key that day
-    # ("SERVICE KEY IS NOT REGISTERED"). Once a probe returns rows, build
-    # the harvester against them — monthly per-attraction visitor counts
-    # with a 내국인/외국인 split, params YM/SIDO/GUNGU, 1,000 calls/day.
+    pool += tour_facts(gov_key)
     return pool
 
 
@@ -1610,6 +1717,7 @@ Rules:
 - "world" lines set Seoul's metro area against other cities' metro areas, from the OECD. Their labels are BARE CITY NAMES, so the opener MUST say what is being measured (e.g. "Green space per person", "Within a five-minute walk of transit") — this is the one case where the opener names the metric. Build them into their own post: every world line in a post must come from the SAME pair (all city_green, or all city_transit, never a mix), and a world line NEVER appears alongside a Seoul-only line of any other category. Always include the Seoul line.
 - "property" lines are one month's apartment-market filings from the national land ministry: actual sale prices (the dearest and cheapest single sales), a record jeonse deposit, and counts of filings. Build them into their own post — never alongside a live "right now" line, a spending line, a national line or a world line. The pairs are the point: the price gap (dearest vs cheapest sale) or the jeonse/monthly-rent split. Never put a month or date in a property label — the filing month rides on the card automatically.
 - "weather" lines are published readings from Seoul's official weather station: yesterday's high/low/rain, and the last full month set against the SAME month FIFTY YEARS earlier (each label already carries its month and year — do not reword those labels). Build them into their own post, never mixed with any other category, and pick ONE frame: either the yesterday set, or the then-and-now set. In a then-and-now post every pair must keep BOTH its sides, every pair must put its two years in the SAME order, and the arrangement carries the half-century — never point it out.
+- "tourism" lines are one month's visitor counts at named paid-admission Seoul attractions (the palaces, Lotte World, Seoul Sky…). Own post; ONE frame per post — total visitors OR foreign visitors, never both; the month rides on the card automatically. The pairs are the point: a dead heat or the widest gap between two named attractions.
 - "airport", "health" and "culture" lines are single-source sets like "property" and "weather": each builds its OWN post, never mixed with another category. An airport post is Gimpo's newest month — pick ONE frame, the twenty-year pair or the domestic/international split (labels carry their months). A health post is patient counts at Seoul care institutions in one year: the labels are bare condition names, so the opener must carry the "a year in Seoul's clinics" framing. These are real illnesses — arrange the numbers, never joke about them, and drop any set that reads as a punchline at patients' expense. A culture post is the city's museums and galleries: the counts and the year's most-visited houses.
 - Keep the opener neutral (a time or place framing), EXCEPT on a world post, where it must name the metric as described above. Pick one from OPENERS, or write a short neutral one (max ~5 words) — it must NOT give away or hint at the pairing. Provide it in English and Korean.
 - You may lightly reword an English label for wit, but keep its meaning and DO NOT put any digit in a label.
@@ -1918,7 +2026,7 @@ def compose(sel, pool):
     # Categories whose figures come from a publisher other than Seoul Open
     # Data; anything outside this set is credited to data.seoul.go.kr.
     non_seoul = {'national', 'world', 'property', 'weather', 'airport',
-                 'health', 'culture'}
+                 'health', 'culture', 'tourism'}
     uses_seoul = any(c not in non_seoul for c in cats)
     uses_kosis = 'national' in cats
     uses_oecd = 'world' in cats
@@ -1927,6 +2035,7 @@ def compose(sel, pool):
     uses_kac = 'airport' in cats
     uses_hira = 'health' in cats
     uses_mcst = 'culture' in cats
+    uses_tour = 'tourism' in cats
     srcs = (['data.seoul.go.kr'] if uses_seoul else []) + \
            (['kosis.kr'] if uses_kosis else []) + \
            ([OECD_DOMAIN] if uses_oecd else []) + \
@@ -1934,7 +2043,8 @@ def compose(sel, pool):
            (['data.kma.go.kr'] if uses_kma else []) + \
            (['airport.co.kr'] if uses_kac else []) + \
            (['opendata.hira.or.kr'] if uses_hira else []) + \
-           (['mcst.go.kr'] if uses_mcst else [])
+           (['mcst.go.kr'] if uses_mcst else []) + \
+           (['know.tour.go.kr'] if uses_tour else [])
     if not srcs:
         srcs = ['data.seoul.go.kr']
     joined = ', '.join(srcs)
@@ -1990,6 +2100,14 @@ def compose(sel, pool):
         if CULTURE_Y['y']:
             scope_en.append(f'Culture-facility survey, {CULTURE_Y["y"]} figures')
             scope_ko.append(f'문화기반시설총람, {CULTURE_Y["y"]}년 기준')
+    if uses_tour:
+        # Paid-admission scope and the (months-old) data month are keys to
+        # the figures; both ride the card.
+        src_en += ' · KCTI'
+        src_ko += ' · 한국문화관광연구원'
+        if TOUR_M['en']:
+            scope_en.append(f'Paid-admission sites, {TOUR_M["en"]}')
+            scope_ko.append(f'유료 관광지 입장객, {TOUR_M["ko"]}')
     metro_en = metro_ko = ''
     if uses_oecd:
         # Name the metric here rather than trusting the opener. The metro-area
@@ -2078,7 +2196,8 @@ LINK_DOMAINS = [('data.seoul.go.kr', 'https://data.seoul.go.kr'),
                 ('data.kma.go.kr', 'https://data.kma.go.kr'),
                 ('airport.co.kr', 'https://www.airport.co.kr'),
                 ('opendata.hira.or.kr', 'https://opendata.hira.or.kr'),
-                ('mcst.go.kr', 'https://www.mcst.go.kr')]
+                ('mcst.go.kr', 'https://www.mcst.go.kr'),
+                ('know.tour.go.kr', 'https://know.tour.go.kr')]
 
 
 def add_tags(tb, body, extra=None):
