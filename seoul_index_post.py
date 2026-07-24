@@ -43,6 +43,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
@@ -1781,26 +1782,34 @@ def select(pool, state):
     payload = {'POOL': slim, 'PAIRS': pairs,
                'OPENERS': [list(o) for o in OPENERS], 'AVOID_IDS': avoid}
     prompt = SELECT_PROMPT + '\n\n' + json.dumps(payload, ensure_ascii=False)
-    for attempt in range(2):
+    attempts = 4
+    for attempt in range(attempts):
+        last = attempt == attempts - 1
         try:
             r = subprocess.run(['claude', '-p', '--model', CLAUDE_MODEL, prompt],
                                capture_output=True, text=True, env=claude_env(),
                                timeout=CLAUDE_TIMEOUT)
         except subprocess.TimeoutExpired:
-            if attempt == 0:
-                continue
-            raise RuntimeError(
-                f'claude -p timed out after {CLAUDE_TIMEOUT}s, twice')
+            if last:
+                raise RuntimeError(
+                    f'claude -p timed out after {CLAUDE_TIMEOUT}s, {attempts} times')
+            continue
         if r.returncode != 0:
             err = (r.stderr or r.stdout or '').strip() or '(no output)'
-            raise RuntimeError(f'claude -p failed (exit {r.returncode}): {err}')
+            # A transient network blip at fire time (EHOSTUNREACH etc.) surfaces
+            # as a nonzero exit here — back off and retry rather than crashing
+            # the run and skipping the post.
+            if last:
+                raise RuntimeError(f'claude -p failed (exit {r.returncode}): {err}')
+            time.sleep(5 * (attempt + 1))
+            continue
         text = re.sub(r'^```[a-z]*\n?|\n?```$', '', r.stdout.strip()).strip()
         try:
             return json.loads(text)
         except json.JSONDecodeError:
-            if attempt == 0:
-                continue
-            raise RuntimeError(f'claude -p returned invalid JSON: {text[:200]!r}')
+            if last:
+                raise RuntimeError(f'claude -p returned invalid JSON: {text[:200]!r}')
+            continue
 
 
 def clean_label(label, fallback, value):
