@@ -217,7 +217,7 @@ OPENERS = [
     ('Seoul and the nation', '서울과 전국'),
     ('Seoul among world cities', '세계 도시 속의 서울'),
     ('The apartment market, one month', '한 달의 아파트 시장'),
-    ('Fifty years apart', '50년의 간격'),
+    ('50 years apart', '50년의 간격'),
     ('Seoul, yesterday', '어제의 서울'),
     ('Through Gimpo airport', '김포공항에서'),
     ("A year in Seoul's clinics", '서울 진료실의 1년'),
@@ -1008,13 +1008,17 @@ def molit_facts(molit_key):
 
 WX_BASE = ('http://apis.data.go.kr/1360000/AsosDalyInfoService/getWthrDataList'
            '?serviceKey={key}&dataType=JSON&dataCd=ASOS&dateCd=DAY&stnIds=108'
-           '&numOfRows=31&pageNo=1&startDt={start}&endDt={end}')
+           '&numOfRows={rows}&pageNo=1&startDt={start}&endDt={end}')
 WX_YEARS_BACK = 50
 
 
-def _wx_rows(key, start, end):
-    """Daily rows for one date span, [] on any failure (the vein just thins)."""
-    url = WX_BASE.format(key=key, start=start, end=end)
+def _wx_rows(key, start, end, rows=31):
+    """Daily rows for one date span, [] on any failure (the vein just thins).
+
+    A month fits in the 31-row default; the summer-to-date span crosses
+    months, so its caller asks for enough rows to cover the whole window in
+    one page (the API returns the full range when numOfRows spans it)."""
+    url = WX_BASE.format(key=key, start=start, end=end, rows=rows)
     r = subprocess.run(['curl', '-s', '--max-time', '30', '-A', MOLIT_UA, url],
                        capture_output=True, text=True)
     try:
@@ -1117,6 +1121,57 @@ def kma_facts(key):
                                   grouped(ex[kind]), grouped(ex[kind]),
                                   pair=f'{fid}_then', pin=True,
                                   label_ko=f'{ko_label}, {y}년 {mon}월'))
+
+    # Season-to-date: the vein's one present-tense frame. Everything above is
+    # settled (yesterday, or a closed month); this counts from 1 June through
+    # YESTERDAY, a window still growing, against the SAME span fifty years
+    # back. The running swelter tally (days of 33°C or more) is the point of
+    # it, and it rides with the season's other extremes so far — hottest day,
+    # wettest day, tropical nights — exactly as the monthly frame bundles its
+    # own. Still published rows and counts of rows, so the vein's rule holds.
+    # Offered only in summer, and only once swelter days have landed: the
+    # tally is the reason the frame exists, so a 0/0 swelter count means no
+    # frame (a pair of zeros is not a fact).
+    if today.month in (6, 7, 8, 9):
+        s_start = date(today.year, 6, 1)
+        then_start = date(today.year - WX_YEARS_BACK, 6, 1)
+        then_yday = date(yday.year - WX_YEARS_BACK, yday.month, yday.day)
+        s_now = _wx_extremes(_wx_rows(key, f'{s_start:%Y%m%d}',
+                                      f'{yday:%Y%m%d}', rows=200))
+        s_then = _wx_extremes(_wx_rows(key, f'{then_start:%Y%m%d}',
+                                       f'{then_yday:%Y%m%d}', rows=200))
+        if s_now['swelter'] or s_then['swelter']:
+            span_en = f'1 Jun–{yday.day} {MONTHS_EN[yday.month - 1][:3]}'
+            span_ko = f'6월 1일–{yday.month}월 {yday.day}일'
+            sides = (('now', s_now, yday.year),
+                     ('then', s_then, yday.year - WX_YEARS_BACK))
+            for side, ex, y in sides:
+                if ex['hot']:
+                    v = _wx_num(ex['hot'], 'maxTa')
+                    facts.append(fact(f'wx_s_hot_{side}', 'weather',
+                                      f'Hottest day, {span_en} {y}',
+                                      f'{v:.1f}°C', f'{v:.1f}°C', pair='wx_s_hot',
+                                      pin=True,
+                                      label_ko=f'가장 더웠던 날, {y}년 {span_ko}'))
+                if ex['wet']:
+                    v = _wx_num(ex['wet'], 'sumRn')
+                    facts.append(fact(f'wx_s_wet_{side}', 'weather',
+                                      f'Wettest day, {span_en} {y}',
+                                      f'{v:.1f}mm', f'{v:.1f}mm', pair='wx_s_wet',
+                                      pin=True,
+                                      label_ko=f'비가 가장 많이 온 날, {y}년 {span_ko}'))
+            for fid, kind, en_label, ko_label in (
+                    ('wx_s_swelter', 'swelter', 'Days of 33°C or more',
+                     '최고기온 33°C 이상인 날'),
+                    ('wx_s_tropical', 'tropical', 'Nights never below 25°C',
+                     '최저기온 25°C 이상인 날')):
+                if s_now[kind] or s_then[kind]:
+                    for side, ex, y in sides:
+                        facts.append(fact(f'{fid}_{side}', 'weather',
+                                          f'{en_label}, {span_en} {y}',
+                                          grouped(ex[kind]), grouped(ex[kind]),
+                                          pair=fid, pin=True,
+                                          label_ko=f'{ko_label}, {y}년 {span_ko}'))
     return facts
 
 
@@ -1756,7 +1811,7 @@ Rules:
 - "national" lines (Seoul set against the whole country: its share of the population, the fertility-rate gap) are annual figures from a different source. Build them into their own "Seoul and the nation" post — never mix a national line with a live "right now" line or a spending line. The fertility pair is only two lines, so pair it with the population-share line to make a set of three.
 - "world" lines set Seoul's metro area against other cities' metro areas, from the OECD. Their labels are BARE CITY NAMES, so the opener MUST say what is being measured (e.g. "Green space per person", "Within a five-minute walk of transit") — this is the one case where the opener names the metric. Build them into their own post: every world line in a post must come from the SAME pair (all city_green, or all city_transit, never a mix), and a world line NEVER appears alongside a Seoul-only line of any other category. Always include the Seoul line.
 - "property" lines are one month's apartment-market filings from the national land ministry: actual sale prices (the dearest and cheapest single sales), a record jeonse deposit, and counts of filings. Build them into their own post — never alongside a live "right now" line, a spending line, a national line or a world line. The pairs are the point: the price gap (dearest vs cheapest sale) or the jeonse/monthly-rent split. Never put a month or date in a property label — the filing month rides on the card automatically.
-- "weather" lines are published readings from Seoul's official weather station: yesterday's high/low/rain, and the last full month set against the SAME month FIFTY YEARS earlier (each label already carries its month and year — do not reword those labels). Build them into their own post, never mixed with any other category, and pick ONE frame: either the yesterday set, or the then-and-now set. In a then-and-now post every pair must keep BOTH its sides, every pair must put its two years in the SAME order, and the arrangement carries the half-century — never point it out.
+- "weather" lines are published readings from Seoul's official weather station: yesterday's high/low/rain, the last full month set against the SAME month FIFTY YEARS earlier, and (in summer) a season-to-date swelter tally — days of 33°C or more counted from 1 June through yesterday — likewise against the same span fifty years back (each label already carries its dates and year — do not reword those labels). Build them into their own post, never mixed with any other category, and pick ONE frame: the yesterday set, the then-and-now monthly set, OR the season-to-date set (never blend the three). A season-to-date post is built around the swelter tally ("Days of 33°C or more, 1 Jun–…") — always include that pair; the hottest/wettest/tropical season-to-date pairs are its companions. In any then-and-now or season-to-date post every pair must keep BOTH its sides, every pair must put its two years in the SAME order, and the arrangement carries the half-century — never point it out. Open both fifty-year weather frames with "50 years apart" / "50년의 간격" (the numeral, not "Fifty").
 - "tourism" lines are one month's visitor counts at named paid-admission Seoul attractions (the palaces, Lotte World, Seoul Sky…). Own post; ONE frame per post — total visitors OR foreign visitors, never both; the month rides on the card automatically. The pairs are the point: a dead heat or the widest gap between two named attractions.
 - "airport", "health" and "culture" lines are single-source sets like "property" and "weather": each builds its OWN post, never mixed with another category. An airport post is Gimpo's newest month — pick ONE frame, the twenty-year pair or the domestic/international split (labels carry their months). A health post is patient counts at Seoul care institutions in one year: the labels are bare condition names, so the opener must carry the "a year in Seoul's clinics" framing. These are real illnesses — arrange the numbers, never joke about them, and drop any set that reads as a punchline at patients' expense. A culture post is the city's museums and galleries: the counts and the year's most-visited houses.
 - Keep the opener neutral (a time or place framing), EXCEPT on a world post, where it must name the metric as described above. Pick one from OPENERS, or write a short neutral one (max ~5 words) — it must NOT give away or hint at the pairing. Provide it in English and Korean.
