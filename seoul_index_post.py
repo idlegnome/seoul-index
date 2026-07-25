@@ -2325,11 +2325,11 @@ LINK_DOMAINS = [('data.seoul.go.kr', 'https://data.seoul.go.kr'),
                 ('know.tour.go.kr', 'https://know.tour.go.kr')]
 
 
-def add_tags(tb, body, extra=None):
+def source_reply(tb, body, extra=None):
     """Build the source reply: the body with its source domains hyperlinked,
     then optional trailing links — a (prefix, anchor, url) tuple or a list of
     them, used to point at Wikipedia articles (the spotlight's place, or every
-    attraction on a tourism card) — then the hashtags."""
+    attraction on a tourism card). No hashtags: tags ride the card posts only."""
     # Hyperlink every source domain that appears on the source line.
     hits = sorted((body.find(dom), dom, url) for dom, url in LINK_DOMAINS
                   if body.find(dom) != -1)
@@ -2344,20 +2344,14 @@ def add_tags(tb, body, extra=None):
         for prefix, anchor, url in ([extra] if isinstance(extra, tuple) else extra):
             tb.text(prefix)
             tb.link(anchor, url)
-    if TAGS:
-        tb.text('\n')
-        for i, (tag, label) in enumerate(TAGS):
-            if i:
-                tb.text(' ')
-            tb.tag(f'#{tag}', label)
     return tb
 
 
 def tag_line():
     """Tags-only caption for the card posts: just the hashtag facets, no
     headline, so the card stays visually first but the top-level post is
-    still discoverable via the tags (which otherwise live only on the
-    source replies)."""
+    still discoverable via the tags. The card posts are the only place the
+    tags live — the source replies carry none."""
     tb = client_utils.TextBuilder()
     for i, (tag, label) in enumerate(TAGS):
         if i:
@@ -2488,8 +2482,8 @@ def main():
     # top of its post; the source line + hashtags follow as their own threaded
     # reply, which keeps data.seoul.go.kr a real clickable link. The full
     # plaintext body is the card's alt text, and the whole post if rendering fails.
-    en_source = add_tags(client_utils.TextBuilder(), c['src_en'], c.get('wiki_en'))
-    ko_source = add_tags(client_utils.TextBuilder(), c['src_ko'], c.get('wiki_ko'))
+    en_source = source_reply(client_utils.TextBuilder(), c['src_en'], c.get('wiki_en'))
+    ko_source = source_reply(client_utils.TextBuilder(), c['src_ko'], c.get('wiki_ko'))
     en_alt, ko_alt = c['en_body'], c['ko_body']
 
     print(f'\nNote: {sel.get("note", "")}')
@@ -2554,8 +2548,18 @@ def main():
         bsky.send_post(text=ko_source, reply_to=_reply(p3_ref, root_ref), langs=['ko'])
         print('\nPosted (4-post thread: EN card, EN source, KO card, KO source).')
     else:
-        en_full = add_tags(client_utils.TextBuilder(), c['en_body'], c.get('wiki_en'))
-        ko_full = add_tags(client_utils.TextBuilder(), c['ko_body'], c.get('wiki_ko'))
+        # Plaintext fallback (card render failed): there are no card posts here,
+        # so these full-text posts must carry the hashtags themselves — the tags
+        # live on the cards in the normal path, and there is no card to ride.
+        en_full = source_reply(client_utils.TextBuilder(), c['en_body'], c.get('wiki_en'))
+        ko_full = source_reply(client_utils.TextBuilder(), c['ko_body'], c.get('wiki_ko'))
+        for tb in (en_full, ko_full):
+            if TAGS:
+                tb.text('\n')
+                for i, (tag, label) in enumerate(TAGS):
+                    if i:
+                        tb.text(' ')
+                    tb.tag(f'#{tag}', label)
         root = bsky.send_post(text=en_full, langs=['en'])
         root_ref = models.create_strong_ref(root)
         reply_ref = models.AppBskyFeedPost.ReplyRef(parent=root_ref, root=root_ref)
