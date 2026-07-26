@@ -74,7 +74,7 @@ CLAUDE_TIMEOUT = 300
 # 20 Jul 2026). Fail before doing anything at all — but only when THIS file is
 # the program being run: importers (seoul_index_methodology.py) have their own
 # flags, and validating their argv here rejected `--pin` on 23 Jul 2026.
-_KNOWN_ARGS = {'--dry-run', '--spotlight'}
+_KNOWN_ARGS = {'--dry-run', '--spotlight', '--show-cross'}
 if __name__ == '__main__':
     _unknown = [a for a in sys.argv[1:] if a not in _KNOWN_ARGS]
     if _unknown:
@@ -84,6 +84,7 @@ if __name__ == '__main__':
 
 DRY_RUN = '--dry-run' in sys.argv
 FORCE_SPOTLIGHT = '--spotlight' in sys.argv   # for testing the single-place card
+SHOW_CROSS = '--show-cross' in sys.argv       # print cross-vein collisions, then exit
 MAX_POST_CHARS = 285  # buffer under Bluesky's 300-grapheme limit
 SEOUL_TZ = ZoneInfo('Asia/Seoul')
 SOURCE_URL = 'https://data.seoul.go.kr/'
@@ -353,7 +354,8 @@ def en_name(korean, kind):
 
 
 def fact(fid, cat, label_en, value_en, value_ko, estimated=False, pair=None,
-         year=None, forecast=False, label_ko=None, pin=False):
+         year=None, forecast=False, label_ko=None, pin=False,
+         num=None, unit=None):
     """One candidate line. `label_ko` is normally left None so the selector
     translates the label; spotlight lines set it because their labels carry
     clock times, and a translated time is a number Python no longer owns.
@@ -362,11 +364,19 @@ def fact(fid, cat, label_en, value_en, value_ko, estimated=False, pair=None,
     usually an improvement but silently drops anything it reads as ornament.
     It shortened "Subway boardings on 18 Jul" to "Subway", leaving a figure
     with no date attached to it. Pin a label whose wording is load-bearing:
-    a date, a place, a named standard."""
+    a date, a place, a named standard.
+
+    `num` + `unit` make a fact eligible for a cross-vein collision (see
+    cross_vein_pairs): `num` is the raw magnitude and `unit` its class
+    ('won' or 'people'). Left None, a fact is never set against another vein's.
+    Only the DETECTOR reads `num`; the posted value is still value_en, so
+    Python owns every number as before. Collide like with like only — a ₩
+    figure never against a head-count, people never against a count of things
+    (flights, filings, museums stay un-collidable, i.e. unit left None)."""
     return {'id': fid, 'cat': cat, 'label_en': label_en, 'value_en': value_en,
             'value_ko': value_ko, 'estimated': estimated, 'pair': pair,
             'year': year, 'forecast': forecast, 'label_ko': label_ko,
-            'pin': pin}
+            'pin': pin, 'num': num, 'unit': unit}
 
 
 # --- harvesters ------------------------------------------------------------
@@ -414,7 +424,8 @@ def crowd_facts(api_key, spots=None):
     for g in got:
         facts.append(fact(f'crowd_{g["en"]}', 'crowd',
                           f'Estimated crowd in {g["en"]} right now',
-                          grouped(g['mid']), grouped(g['mid']), estimated=True))
+                          grouped(g['mid']), grouped(g['mid']), estimated=True,
+                          num=g['mid'], unit='people'))
         facts.append(fact(f'visitor_{g["en"]}', 'crowd',
                           f'Estimated share in {g["en"]} who don’t live there',
                           f'{g["visitor"]}%', f'{g["visitor"]}%', estimated=True))
@@ -672,10 +683,12 @@ def transport_facts(api_key, state):
     facts = [
         fact('sub_total', 'transport', f'Subway boardings on {d}',
              grouped(c['sub_total']), grouped(c['sub_total']), pair='modes',
-             pin=True, label_ko=f'{d_ko} 지하철 승차 인원'),
+             pin=True, label_ko=f'{d_ko} 지하철 승차 인원',
+             num=c['sub_total'], unit='people'),
         fact('bus_total', 'transport', f'Bus boardings the same day',
              grouped(c['bus_total']), grouped(c['bus_total']), pair='modes',
-             pin=True, label_ko='같은 날 버스 승차 인원'),
+             pin=True, label_ko='같은 날 버스 승차 인원',
+             num=c['bus_total'], unit='people'),
         # The station name is set in both languages here rather than left to the
         # selector: it would otherwise carry "Hongik Univ." across to the Korean
         # card in Latin script.
@@ -687,11 +700,13 @@ def transport_facts(api_key, state):
         fact('sub_busiest', 'transport',
              f'Busiest station, {en_name(c["busiest_st"], "stations")}',
              grouped(c['busiest_v']), grouped(c['busiest_v']), pair='station_gap', pin=True,
-             label_ko=f'가장 붐빈 역, {c["busiest_st"]}'),
+             label_ko=f'가장 붐빈 역, {c["busiest_st"]}',
+             num=c['busiest_v'], unit='people'),
         fact('sub_quietest', 'transport',
              f'Quietest station, {en_name(c["quietest_st"], "stations")}',
              grouped(c['quietest_v']), grouped(c['quietest_v']), pair='station_gap', pin=True,
-             label_ko=f'가장 한산한 역, {c["quietest_st"]}'),
+             label_ko=f'가장 한산한 역, {c["quietest_st"]}',
+             num=c['quietest_v'], unit='people'),
     ]
     return facts
 
@@ -763,7 +778,8 @@ def sales_facts():
             continue
         facts.append(fact(f'sales_{ko}', 'spending',
                           f'{en.capitalize()}',
-                          won_en(cell['amt']), won_ko(cell['amt'])))
+                          won_en(cell['amt']), won_ko(cell['amt']),
+                          num=cell['amt'], unit='won'))
     # Dead-heat detector: any two curated categories within 2% of each other.
     curated = [(ko, inds[ko]['amt']) for ko in SALES_LABELS if ko in inds]
     best = None
@@ -793,7 +809,7 @@ def sales_facts():
         avg = cell['amt'] / cell['co']
         avg_list.append((ko, en, avg))
         facts.append(fact(f'avg_{ko}', 'avgbill', en.capitalize(),
-                          won_en(avg), won_ko(avg)))
+                          won_en(avg), won_ko(avg), num=avg, unit='won'))
     if len(avg_list) >= 2:
         hi = max(avg_list, key=lambda t: t[2])
         lo = min(avg_list, key=lambda t: t[2])
@@ -960,7 +976,8 @@ def molit_facts(molit_key):
                               f'{en_word} paid for an apartment '
                               f'({en_name(gu, "districts")})',
                               won_en(amt), won_ko(amt), pair='apt_price_gap',
-                              pin=True, label_ko=f'{ko_word} 아파트, {gu}'))
+                              pin=True, label_ko=f'{ko_word} 아파트, {gu}',
+                              num=amt, unit='won'))
     if agg.get('trade_n'):
         n = agg['trade_n']
         facts.append(fact('apt_sales_n', 'property',
@@ -981,7 +998,7 @@ def molit_facts(molit_key):
         facts.append(fact('apt_top_jeonse', 'property',
                           f'Largest jeonse deposit ({en_name(gu, "districts")})',
                           won_en(amt), won_ko(amt), pin=True,
-                          label_ko=f'최고 전세 보증금, {gu}'))
+                          label_ko=f'최고 전세 보증금, {gu}', num=amt, unit='won'))
     if agg.get('jeonse_n') and agg.get('wolse_n'):
         for fid, label, n in (
                 ('lease_jeonse_n', 'Jeonse leases filed', agg['jeonse_n']),
@@ -1231,7 +1248,8 @@ def kac_facts(key):
     facts = [fact('kac_pax_now', 'airport',
                   f'Passengers through Gimpo, {mon_en} {y}',
                   grouped(now['pax']), grouped(now['pax']), pair='gimpo_then',
-                  pin=True, label_ko=f'김포공항 이용객, {y}년 {m}월'),
+                  pin=True, label_ko=f'김포공항 이용객, {y}년 {m}월',
+                  num=now['pax'], unit='people'),
              fact('kac_flights_now', 'airport',
                   f'Flights in and out, {mon_en} {y}',
                   grouped(now['flights']), grouped(now['flights']),
@@ -1252,7 +1270,8 @@ def kac_facts(key):
             facts.append(fact(fid, 'airport', f'{en}, {mon_en} {y}',
                               grouped(row['pax']), grouped(row['pax']),
                               pair='gimpo_split', pin=True,
-                              label_ko=f'{ko}, {y}년 {m}월'))
+                              label_ko=f'{ko}, {y}년 {m}월',
+                              num=row['pax'], unit='people'))
     return facts
 
 
@@ -1544,7 +1563,8 @@ def tour_facts(key):
             totals.append((ko_name, en, total))
             facts.append(fact(f'tour_{ko_name}', 'tourism',
                               f'Visitors to {en}',
-                              grouped(total), grouped(total)))
+                              grouped(total), grouped(total),
+                              num=total, unit='people'))
         if forgn:
             facts.append(fact(f'tourfor_{ko_name}', 'tourism',
                               f'Foreign visitors to {en}',
@@ -1612,7 +1632,8 @@ def kosis_facts(kosis_key):
         n_kr, n_se = int(pop_kr['DT']), int(pop_se['DT'])
         py = pop_se.get('PRD_DE') or None
         facts.append(fact('pop_seoul', 'national', 'People who live in Seoul',
-                          grouped(n_se), grouped(n_se), pair='share_gap', year=py))
+                          grouped(n_se), grouped(n_se), pair='share_gap', year=py,
+                          num=n_se, unit='people'))
         facts.append(fact('pop_korea', 'national', 'People who live in South Korea',
                           grouped(n_kr), grouped(n_kr), pair='share_gap', year=py))
         if n_kr:
@@ -1801,6 +1822,11 @@ You are given a POOL of candidate lines (each already has an exact value you mus
 
 Rules:
 - Choose 3 to 4 lines that form a coherent set. STRONGLY prefer building around one PAIR (a dead heat or a wide gap) — that is the joke.
+- CROSS_PAIRS (may be empty) are the account's sharpest move: two figures from DIFFERENT veins that happen to land on nearly the same number — a coincidence worth a double-take. Each side shares one unit (two ₩ figures, or two head-counts). You MAY build ONE post around a single CROSS_PAIR, and choosing one OVERRIDES the "own post, never mixed" rule below — but only for the two veins that pair names. When you do:
+  · Use BOTH of the pair's lines. Add 1 or 2 companion lines drawn ONLY from those same two veins, and EVERY line in the post must share the pair's unit (all ₩, or all head-counts) — never add a percentage, a count of things, or a line from any third vein.
+  · The opener MUST be neutral and give nothing away — "Seoul by the numbers" / "숫자로 보는 서울", or a short neutral time/place framing. NEVER use a vein-specific opener (not "Spent last quarter", not "The apartment market", not "Through the turnstiles"): it would falsely frame the other vein's line.
+  · Let the coincidence sit there unremarked, exactly as with any pair — never write a line, opener or note that points out that the two numbers match.
+  · Only reach for a CROSS_PAIR when the two SUBJECTS make a genuinely interesting, tasteful pair (one apartment's deposit against a whole industry's quarter; a month's visitors against a crowd right now). If a pair's two subjects are dull or jarring together, ignore it and build a normal single-vein post. Never force it. NEVER build a cross pair that involves illness or patients.
 - House style is Harper's Index: let the arrangement carry the joke. NEVER add a line that explains or points out the juxtaposition, and never editorialise. Just the labelled numbers.
 - Do NOT worry about line order: when the lines share a unit (e.g. an all-₩ post) they are automatically sorted by value, largest first. A near-equal "dead heat" still lands because near-equal values end up next to each other. Just choose a coherent set.
 - Each line is a bare "Label: value". Do NOT repeat a shared verb or metric on every line — put it once in the opener. For spending posts (₩ amounts), pick an opener that carries the verb, e.g. "Spent last quarter in Seoul", so lines read "Coffee shops: ₩651.4bn", never "Spent at coffee shops: ...". This matters for live "right now" lines too: the pool labels repeat the whole phrase ("Estimated crowd in Jamsil right now"), and a post that copies them four times reads like a form. Name the metric on ONE line and leave the others bare ("Estimated crowd in Jamsil", then "Hongdae", "Gangnam Station"), and let the opener carry the time frame.
@@ -1825,6 +1851,60 @@ Return ONLY JSON:
 """
 
 
+# --- cross-vein collisions -------------------------------------------------
+# The sharpest Harper's-Index juxtaposition is a coincidence: two figures from
+# UNRELATED datasets that land on nearly the same number, so the reader does a
+# double-take. Within a single vein the pairs are only ever the two ends of one
+# distribution (dearest vs cheapest flat) — a range, not a collision. This pass
+# scans the whole pool for two facts from DIFFERENT veins whose magnitudes
+# match, and hands the selector that pair as a sanctioned exception to the
+# never-mix rule. Safety lives in fact(): only 'won' and 'people' facts carry a
+# `num`, so a ₩ figure is never set against a head-count and people never
+# against a count of things. The detector reads `num` but never posts it — the
+# published value is still value_en, so Python owns every number as before.
+
+# Two figures "collide" when their magnitudes are within this fraction of the
+# larger. Looser than the 2% a within-vein dead heat uses: across veins the
+# surprise is that two unrelated things are even the same size, so a rough
+# match still reads as coincidence rather than sameness.
+CROSS_HEAT_MAX = 0.15
+# At most this many collisions are offered to the selector, closest first. It
+# builds at most one post around one of them; the rest are there so a slow-
+# moving dataset does not surface the identical pair every single day.
+CROSS_MAX = 6
+
+
+def cross_vein_pairs(pool):
+    """Cross-vein 'dead heat' collisions: pairs of facts from different
+    categories whose magnitudes nearly match, closest first. Advisory input for
+    the selector (see SELECT_PROMPT) — it references the two ids like any other
+    pick, and compose() already credits every vein a post touches, so no
+    special handling is needed downstream."""
+    elig = [f for f in pool if f.get('unit') in ('won', 'people')
+            and isinstance(f.get('num'), (int, float)) and f['num'] > 0]
+    found = []
+    for i in range(len(elig)):
+        for j in range(i + 1, len(elig)):
+            a, b = elig[i], elig[j]
+            if a['cat'] == b['cat'] or a['unit'] != b['unit']:
+                continue
+            hi = max(a['num'], b['num'])
+            gap = (hi - min(a['num'], b['num'])) / hi
+            if gap <= CROSS_HEAT_MAX:
+                found.append((gap, a, b))
+    found.sort(key=lambda t: t[0])
+    out = []
+    for gap, a, b in found[:CROSS_MAX]:
+        out.append({
+            'unit': a['unit'],
+            'a': a['id'], 'a_cat': a['cat'],
+            'a_label': a['label_en'], 'a_value': a['value_en'],
+            'b': b['id'], 'b_cat': b['cat'],
+            'b_label': b['label_en'], 'b_value': b['value_en'],
+        })
+    return out
+
+
 def select(pool, state):
     avoid = state.get('recent_ids', [])[-RECENT_IDS_KEEP:]
     slim = [{'id': f['id'], 'cat': f['cat'], 'label_en': f['label_en'],
@@ -1835,6 +1915,7 @@ def select(pool, state):
         if f['pair']:
             pairs.setdefault(f['pair'], []).append(f['id'])
     payload = {'POOL': slim, 'PAIRS': pairs,
+               'CROSS_PAIRS': cross_vein_pairs(pool),
                'OPENERS': [list(o) for o in OPENERS], 'AVOID_IDS': avoid}
     prompt = SELECT_PROMPT + '\n\n' + json.dumps(payload, ensure_ascii=False)
     attempts = 4
@@ -2403,6 +2484,22 @@ def main():
     kosis_key = config.get('kosis_key')
     gov_key = config.get('data_go_kr_key')
     state = json.loads(STATE.read_text()) if STATE.exists() else {}
+
+    # Inspect the cross-vein collisions the detector finds for the live pool,
+    # then exit — no selector call, no post. A deterministic look at what the
+    # selector will be offered (unlike a --dry-run, whose picks the model makes).
+    if SHOW_CROSS:
+        pool = build_pool(api_key, state, kosis_key, gov_key)
+        elig = [f for f in pool if f.get('unit')]
+        print(f'{len(pool)} facts, {len(elig)} collidable:')
+        for f in sorted(elig, key=lambda f: (f['unit'], -f['num'])):
+            print(f'  [{f["unit"]:6}] {f["num"]:>15,.0f}  {f["cat"]:9} {f["id"]}')
+        cross = cross_vein_pairs(pool)
+        print(f'\n{len(cross)} cross-vein collision(s), closest first:')
+        for c in cross:
+            print(f'  {c["unit"]}: {c["a_label"]} ({c["a_value"]}, {c["a_cat"]})'
+                  f'  ⟷  {c["b_label"]} ({c["b_value"]}, {c["b_cat"]})')
+        return
 
     # One post in SPOTLIGHT_EVERY, on average, drills into one place instead of
     # setting places against each other, cycling through the curated spots.
