@@ -59,6 +59,11 @@ CONFIG = HERE / 'seoul_index_config.json'
 STATE = HERE / 'seoul_index_state.json'
 SALES_AGG = HERE / 'sales_agg.json'
 NAMES_EN = HERE / 'seoul_index_names_en.json'
+# One JSONL line per posted card, so a week's output can be skimmed to catch
+# duds. Written only on a real post (never a --dry-run), and best-effort: the
+# post is already out by the time it is written, so a logging hiccup must not
+# surface as a failure. See log_card().
+CARD_LOG = HERE / 'card_history.jsonl'
 KEYCHAIN_SERVICE = 'seoulindex-bluesky'
 CLAUDE_TOKEN_ACCOUNT = 'seoulbot'
 CLAUDE_TOKEN_SERVICE = 'claude-oauth-token'
@@ -2463,6 +2468,31 @@ def render_pair(c, out_dir):
     return en, ko
 
 
+def log_card(c, sel, primary, post_uri, handle, fallback):
+    """Append one JSONL line describing the card just posted, so a week's
+    output can be skimmed later to catch duds. Best-effort by design: the
+    thread is already live when this runs, so a logging failure is warned
+    about and swallowed, never raised."""
+    try:
+        rkey = post_uri.rsplit('/', 1)[-1] if post_uri else None
+        url = f'https://bsky.app/profile/{handle}/post/{rkey}' if rkey else None
+        rec = {
+            'at': f'{datetime.now(SEOUL_TZ):%Y-%m-%d %H:%M:%S}',
+            'primary': primary,
+            'cats': c.get('cats', []),
+            'opener': c['opener']['en'],
+            'note': sel.get('note', ''),
+            'lines': [{'label': l['label_en'], 'value': l['value_en']}
+                      for l in c['lines']],
+            'fallback': fallback,
+            'url': url,
+        }
+        with CARD_LOG.open('a', encoding='utf-8') as fh:
+            fh.write(json.dumps(rec, ensure_ascii=False) + '\n')
+    except Exception as e:
+        print(f'(card log failed: {e})')
+
+
 # --- main ------------------------------------------------------------------
 
 def main():
@@ -2623,6 +2653,7 @@ def main():
     password = keychain_password(handle, KEYCHAIN_SERVICE)
     bsky = Client()
     bsky.login(handle, password)
+    posted_uri = None
     if cards:
         (en_bytes, en_size), (ko_bytes, ko_size) = cards['en'], cards['ko']
         en_ar = models.AppBskyEmbedDefs.AspectRatio(width=en_size[0], height=en_size[1])
@@ -2637,6 +2668,7 @@ def main():
         # reply's root stays the first (EN card) post.
         p1 = bsky.send_image(text=tag_line(), image=en_bytes, image_alt=en_alt,
                              langs=['en'], image_aspect_ratio=en_ar)
+        posted_uri = p1.uri
         root_ref = models.create_strong_ref(p1)
         p2 = bsky.send_post(text=en_source, reply_to=_reply(root_ref, root_ref), langs=['en'])
         p2_ref = models.create_strong_ref(p2)
@@ -2668,6 +2700,7 @@ def main():
             sys.exit(f'Plaintext-fallback post too long (EN {en_len}, KO {ko_len}; '
                      f'max {MAX_POST_CHARS}); card render failed. Re-run to reselect.')
         root = bsky.send_post(text=en_full, langs=['en'])
+        posted_uri = root.uri
         root_ref = models.create_strong_ref(root)
         reply_ref = models.AppBskyFeedPost.ReplyRef(parent=root_ref, root=root_ref)
         bsky.send_post(text=ko_full, reply_to=reply_ref, langs=['ko'])
@@ -2680,6 +2713,8 @@ def main():
     if primary == 'world':
         state['last_world_at'] = state['last_success_at']
     write_json_atomic(STATE, state, ensure_ascii=False, indent=2)
+
+    log_card(c, sel, primary, posted_uri, handle, fallback=cards is None)
 
 
 if __name__ == '__main__':
