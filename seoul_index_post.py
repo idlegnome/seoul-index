@@ -2588,11 +2588,12 @@ def main():
     print(f'\nKO alt / fallback ({len(ko_alt)} chars):\n{"-"*46}\n{ko_alt}\n{"-"*46}')
     print(f'\nEN source post: {en_source.build_text()!r}\nKO source post: {ko_source.build_text()!r}')
 
-    # The image caption is always short; this guard protects the plaintext
-    # FALLBACK that posts if card rendering fails.
-    if len(en_alt) > MAX_POST_CHARS or len(ko_alt) > MAX_POST_CHARS:
-        sys.exit(f'Fallback text too long (EN {len(en_alt)}, KO {len(ko_alt)}; '
-                 f'max {MAX_POST_CHARS}). Re-run to reselect.')
+    # No length guard here. In the normal path en_alt/ko_alt ride as the cards'
+    # image ALT text, which Bluesky does not length-limit (there is no maxLength
+    # or maxGraphemes on the embed's alt field). Only the plaintext fallback
+    # below posts the body AS a post, so the ~300-grapheme cap is enforced there
+    # instead: putting it here aborted otherwise-fine card posts whenever the
+    # alt text ran a little long.
 
     # Render both cards; any failure drops us to a plaintext thread so a post
     # never fails to go out over a rendering hiccup.
@@ -2657,6 +2658,14 @@ def main():
                     if i:
                         tb.text(' ')
                     tb.tag(f'#{tag}', label)
+        # Only this fallback posts the body AS a post, so Bluesky's ~300-grapheme
+        # cap applies here alone (the normal path renders the body onto a card and
+        # carries it as unbounded alt text). Measured on the built post text,
+        # which includes the source tail and hashtags the body string itself omits.
+        en_len, ko_len = len(en_full.build_text()), len(ko_full.build_text())
+        if en_len > MAX_POST_CHARS or ko_len > MAX_POST_CHARS:
+            sys.exit(f'Plaintext-fallback post too long (EN {en_len}, KO {ko_len}; '
+                     f'max {MAX_POST_CHARS}); card render failed. Re-run to reselect.')
         root = bsky.send_post(text=en_full, langs=['en'])
         root_ref = models.create_strong_ref(root)
         reply_ref = models.AppBskyFeedPost.ReplyRef(parent=root_ref, root=root_ref)
