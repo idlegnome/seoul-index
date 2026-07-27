@@ -675,7 +675,7 @@ def transport_facts(api_key, state):
         state['transport_cache'] = c
 
     dt = datetime.strptime(c['date'], '%Y%m%d')
-    d = dt.strftime('%-d %b')
+    d = dt.strftime('%-d %B')
     d_ko = f'{dt.month}월 {dt.day}일'
     # All four are pinned: the date says which day the count belongs to, and the
     # station names are the ones looked up from the English name table, so
@@ -1158,7 +1158,7 @@ def kma_facts(key):
         s_then = _wx_extremes(_wx_rows(key, f'{then_start:%Y%m%d}',
                                        f'{then_yday:%Y%m%d}', rows=200))
         if s_now['swelter'] or s_then['swelter']:
-            span_en = f'1 Jun–{yday.day} {MONTHS_EN[yday.month - 1][:3]}'
+            span_en = f'1 June–{yday.day} {MONTHS_EN[yday.month - 1]}'
             span_ko = f'6월 1일–{yday.month}월 {yday.day}일'
             sides = (('now', s_now, yday.year),
                      ('then', s_then, yday.year - WX_YEARS_BACK))
@@ -1824,6 +1824,7 @@ Rules:
 - Choose 3 to 4 lines that form a coherent set. STRONGLY prefer building around one PAIR (a dead heat or a wide gap) — that is the joke.
 - CROSS_PAIRS (may be empty) are the account's sharpest move: two figures from DIFFERENT veins that happen to land on nearly the same number — a coincidence worth a double-take. Each side shares one unit (two ₩ figures, or two head-counts). You MAY build ONE post around a single CROSS_PAIR, and choosing one OVERRIDES the "own post, never mixed" rule below — but only for the two veins that pair names. When you do:
   · Use BOTH of the pair's lines. Add 1 or 2 companion lines drawn ONLY from those same two veins, and EVERY line in the post must share the pair's unit (all ₩, or all head-counts) — never add a percentage, a count of things, or a line from any third vein.
+  · Companion lines must be CLOSE IN SIZE to the pair — the same order of magnitude, never several times larger or smaller. The joke is that the pair's two numbers are nearly equal; a companion that towers over them (a national total above a city-scale pair) flattens that near-equality and buries the double-take. If no same-scale companion exists in those two veins, prefer a different pair.
   · The opener MUST be neutral and give nothing away — "Seoul by the numbers" / "숫자로 보는 서울", or a short neutral time/place framing. NEVER use a vein-specific opener (not "Spent last quarter", not "The apartment market", not "Through the turnstiles"): it would falsely frame the other vein's line.
   · Let the coincidence sit there unremarked, exactly as with any pair — never write a line, opener or note that points out that the two numbers match.
   · Only reach for a CROSS_PAIR when the two SUBJECTS make a genuinely interesting, tasteful pair (one apartment's deposit against a whole industry's quarter; a month's visitors against a crowd right now). If a pair's two subjects are dull or jarring together, ignore it and build a normal single-vein post. Never force it. NEVER build a cross pair that involves illness or patients.
