@@ -79,17 +79,39 @@ CLAUDE_TIMEOUT = 300
 # 20 Jul 2026). Fail before doing anything at all — but only when THIS file is
 # the program being run: importers (seoul_index_methodology.py) have their own
 # flags, and validating their argv here rejected `--pin` on 23 Jul 2026.
-_KNOWN_ARGS = {'--dry-run', '--spotlight', '--show-cross'}
+_KNOWN_ARGS = {'--dry-run', '--spotlight', '--show-cross', '--tail'}
+
+
+def _tail_n(argv):
+    """N for `--tail [N]` (read the card log and exit), or None if absent.
+    N defaults to 10 and a bare integer right after --tail overrides it."""
+    if '--tail' not in argv:
+        return None
+    i = argv.index('--tail')
+    if i + 1 < len(argv) and argv[i + 1].isdigit():
+        return max(1, int(argv[i + 1]))
+    return 10
+
+
 if __name__ == '__main__':
-    _unknown = [a for a in sys.argv[1:] if a not in _KNOWN_ARGS]
+    # --tail may be followed by a bare integer (its count); skip that token so
+    # it is not mistaken for an unknown argument.
+    _skip = None
+    if '--tail' in sys.argv:
+        _t = sys.argv.index('--tail')
+        if _t + 1 < len(sys.argv) and sys.argv[_t + 1].isdigit():
+            _skip = _t + 1
+    _unknown = [a for j, a in enumerate(sys.argv[1:], 1)
+                if a not in _KNOWN_ARGS and j != _skip]
     if _unknown:
         sys.exit(f'Unknown argument(s): {" ".join(_unknown)}. '
-                 f'Recognised: {" ".join(sorted(_KNOWN_ARGS))}. '
+                 f'Recognised: {" ".join(sorted(_KNOWN_ARGS))} [N]. '
                  f'Refusing to run (a bare run posts live).')
 
 DRY_RUN = '--dry-run' in sys.argv
 FORCE_SPOTLIGHT = '--spotlight' in sys.argv   # for testing the single-place card
 SHOW_CROSS = '--show-cross' in sys.argv       # print cross-vein collisions, then exit
+TAIL_N = _tail_n(sys.argv)                    # read the card log, then exit
 MAX_POST_CHARS = 285  # buffer under Bluesky's 300-grapheme limit
 SEOUL_TZ = ZoneInfo('Asia/Seoul')
 SOURCE_URL = 'https://data.seoul.go.kr/'
@@ -2493,9 +2515,54 @@ def log_card(c, sel, primary, post_uri, handle, fallback):
         print(f'(card log failed: {e})')
 
 
+def tail_cards(n):
+    """Print the last n posted cards from card_history.jsonl, newest last, for
+    eyeballing recent output. Read-only: no harvest, no selector, no post, no
+    lock — safe to run any time, including while a scheduled post is composing."""
+    if not CARD_LOG.exists():
+        print(f'No card log yet at {CARD_LOG} — written after the first real post.')
+        return
+    recs = []
+    for ln in CARD_LOG.read_text(encoding='utf-8').splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            recs.append(json.loads(ln))
+        except json.JSONDecodeError:
+            continue  # a torn final line from a crash mid-write is not fatal
+    if not recs:
+        print(f'Card log {CARD_LOG} has no readable entries yet.')
+        return
+    shown = recs[-n:]
+    print(f'Last {len(shown)} of {len(recs)} card(s):')
+    for r in shown:
+        cats = ', '.join(r.get('cats', []))
+        head = f'\n{r.get("at", "?")}  [{r.get("primary", "?")}'
+        head += f' · {cats}]' if cats else ']'
+        if r.get('fallback'):
+            head += '  (plaintext fallback)'
+        print(head)
+        if r.get('opener'):
+            print(f'  {r["opener"]}')
+        for l in r.get('lines', []):
+            print(f'  {l.get("label", "")}: {l.get("value", "")}')
+        if r.get('note'):
+            print(f'  ↳ {r["note"]}')
+        if r.get('url'):
+            print(f'  {r["url"]}')
+    print()
+
+
 # --- main ------------------------------------------------------------------
 
 def main():
+    # --tail is a read-only log viewer: print recent cards and exit before the
+    # lock, config or any network — never touches state, never posts.
+    if TAIL_N is not None:
+        tail_cards(TAIL_N)
+        return
+
     # One run at a time. launchd fires a slot the machine slept through as
     # soon as it wakes, which can land right beside the next scheduled
     # firing; two interleaved runs then race over the state file, and the
