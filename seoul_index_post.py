@@ -719,20 +719,25 @@ def transport_facts(api_key, state):
         # The station name is set in both languages here rather than left to the
         # selector: it would otherwise carry "Hongik Univ." across to the Korean
         # card in Latin script.
-        # "Busiest station" rather than "Boardings at the busiest station": the
-        # card row fits about 53 characters of label plus value before it wraps
-        # and drops its dotted leader, and station names run long (46 chars for
-        # "Gyeonggi Provincial Government Northern Office"). The row above
-        # already says "Subway boardings", so the prefix was carrying little.
+        # "subway station", not just "station": these two lines are often
+        # selected alongside the bus total with no "Subway boardings" row to lean
+        # on (see the card that pairs a bus figure straight above them), so each
+        # line must name its own mode or the reader reads them as bus stops. The
+        # cost is width: the card row fits about 53 characters of label plus value
+        # before it wraps and drops its dotted leader, and station names run long
+        # (46 chars for "Gyeonggi Provincial Government Northern Office"). The
+        # busiest is always a major hub with a short name, so it fits; only a
+        # long-named quietest station wraps, which is a graceful loss of the
+        # leader, not a break.
         fact('sub_busiest', 'transport',
-             f'Busiest station, {en_name(c["busiest_st"], "stations")}',
+             f'Busiest subway station, {en_name(c["busiest_st"], "stations")}',
              grouped(c['busiest_v']), grouped(c['busiest_v']), pair='station_gap', pin=True,
-             label_ko=f'가장 붐빈 역, {c["busiest_st"]}',
+             label_ko=f'가장 붐빈 지하철역, {c["busiest_st"]}',
              num=c['busiest_v'], unit='people'),
         fact('sub_quietest', 'transport',
-             f'Quietest station, {en_name(c["quietest_st"], "stations")}',
+             f'Quietest subway station, {en_name(c["quietest_st"], "stations")}',
              grouped(c['quietest_v']), grouped(c['quietest_v']), pair='station_gap', pin=True,
-             label_ko=f'가장 한산한 역, {c["quietest_st"]}',
+             label_ko=f'가장 한산한 지하철역, {c["quietest_st"]}',
              num=c['quietest_v'], unit='people'),
     ]
     return facts
@@ -2220,6 +2225,22 @@ def compose(sel, pool):
     opener_en = clean_opener(sel.get('opener_en'), 'Seoul by the numbers')
     opener_ko = clean_opener(sel.get('opener_ko'), '숫자로 보는 서울')
     opener_emoji = _valid_emoji(sel.get('opener_emoji'))
+
+    # The transport card mixes two systems - a bus total and subway stations -
+    # so a single transit emoji chosen by the selector can contradict the top
+    # line, e.g. a metro glyph sitting above a bus figure. When the first line
+    # is a transport fact, match the opener emoji to THAT line's mode instead of
+    # trusting the selector: subway, bus, or a generic car as the catch-all.
+    # picks[0] is the first line (lines are built from picks in order below).
+    first_fact = by_id[picks[0]['id']]
+    if first_fact['cat'] == 'transport':
+        fid = first_fact['id']
+        if fid.startswith('sub'):
+            opener_emoji = '🚇'
+        elif fid.startswith('bus'):
+            opener_emoji = '🚌'
+        else:
+            opener_emoji = '🚗'
 
     # Say the shared part once: the selector is asked for bare labels, but it
     # often copies a pool label verbatim onto every line, so trim deterministically
