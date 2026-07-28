@@ -5,6 +5,7 @@ seoul_index_config.json
 seoul_index_state.json
 sales_agg.json
 molit_agg.json
+books_agg.json
 
 # Card previews written into the working tree by --dry-run
 card_*.png

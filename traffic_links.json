@@ -1,0 +1,8 @@
+[
+  {
+    "_comment": "name_en -> link_id table for TrafficInfo (data.seoul.go.kr real-time road speed). Each link_id is a Seoul TOPIS 표준링크 id; TrafficInfo returns speed for ONE id per call, so this list IS the curated set of arteries the account features. TO POPULATE: on the Mini (live key, not the shared 'sample' key, which returns nothing for listings) find each road's link id from TOPIS (topis.seoul.go.kr) or the Seoul standard node-link dataset, then add a row {name_en, name_ko, link_id}. Good candidates: 강변북로 Gangbyeonbuk-ro, 올림픽대로 Olympic-daero, 내부순환로 Naebu Expressway, 강남대로 Gangnam-daero, 세종대로 Sejong-daero, 종로 Jong-ro. traffic_facts stays silent until at least TWO rows resolve to a live speed. Rows whose name_en begins with '_' are ignored (the seed below is one verified link whose road name is not yet known).",
+    "name_en": "_verified_sample_link_road_unknown",
+    "name_ko": "_검증용 링크(도로명 미상)",
+    "link_id": "1220003800"
+  }
+]

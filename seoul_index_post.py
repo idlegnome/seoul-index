@@ -753,11 +753,18 @@ def count_facts(api_key):
         body = [v for v in d.values() if isinstance(v, dict) and 'list_total_count' in v]
         return int(body[0]['list_total_count']) if body else None
 
+    # 4th tuple element (label_ko) is documentation only — count facts leave
+    # label_ko None so the selector translates, exactly as the pre-existing rows
+    # already do. Service names all verified live (INFO-000 + a count) 28 Jul 2026.
     specs = [('wifi', 'TbPublicWifiInfo', 'Public Wi-Fi hotspots the city runs', '공공 와이파이 수'),
              ('library', 'SeoulPublicLibraryInfo', 'Public libraries', None),
              ('park', 'SearchParkInfoService', 'Major parks', None),
              ('busstop', 'busStopLocationXyInfo', 'Bus stops citywide', None),
-             ('events', 'culturalEventInfo', 'Cultural events on the city’s listings', None)]
+             ('events', 'culturalEventInfo', 'Cultural events on the city’s listings', None),
+             ('culture_space', 'culturalSpaceInfo',
+              'Cultural spaces: museums, galleries, halls', '박물관·미술관·공연장 등 문화공간 수'),
+             ('carpark', 'GetParkInfo',
+              'Car parks in the city’s parking system', '주차 정보에 등록된 주차장 수')]
     for fid, service, label, _ in specs:
         try:
             n = total(service)
@@ -767,6 +774,185 @@ def count_facts(api_key):
         except (RuntimeError, KeyError, IndexError, ValueError):
             continue
     return out
+
+
+def bike_facts(api_key):
+    """Live Ttareungi (public-bike) numbers, citywide, right now.
+
+    The bikeList service returns one row per docking station — bikes currently
+    parked (parkingBikeTotCnt), rack capacity (rackTotCnt) and occupancy — and
+    refreshes continuously (data.seoul.go.kr 갱신주기 '수시'). ~2,700 stations in
+    pages of 1,000. Unlike CardBus/CardSubway, bikeList's list_total_count only
+    echoes the page size, so it is NO USE as a grand total: page until a short
+    page instead (verified live on the Mini 28 Jul 2026 — 1000+1000+742 rows).
+
+    Aggregate-only, by design: station names come back as messy Korean strings
+    ('102. 망원역 1번출구 앞') that the English name table does not carry, so a
+    named line would fall back to Korean on the English card. The citywide totals
+    carry the story without names, and stay fully owned by Python."""
+    base = f'http://openapi.seoul.go.kr:8088/{api_key}/json/bikeList'
+    stations = bikes = racks = empty = 0
+    start, page = 1, 1000
+    while start <= 20000:   # safety cap, far above the ~2,700 real stations
+        try:
+            d = http_get_json(f'{base}/{start}/{start + page - 1}/')
+        except RuntimeError:
+            return []   # a network failure would misreport the citywide totals
+        # bikeList's list_total_count just echoes the page size, so it can't be
+        # used as a grand total; page until a short page instead. Past the last
+        # station the response simply omits 'rentBikeStatus', so .get() -> {} ->
+        # no rows -> stop cleanly.
+        body = d.get('rentBikeStatus') or {}
+        rows = body.get('row') or []
+        if not rows:
+            break
+        for x in rows:
+            b = int(float(x.get('parkingBikeTotCnt', 0) or 0))
+            racks += int(float(x.get('rackTotCnt', 0) or 0))
+            stations += 1
+            bikes += b
+            if b == 0:
+                empty += 1
+        if len(rows) < page:
+            break   # last (partial) page
+        start += page
+    if not stations:
+        return []
+    # pin the two "right now" labels: the selector would otherwise trim "right
+    # now" as ornament and leave a live count reading like a fixed total.
+    return [
+        fact('bike_avail', 'bike', 'Ttareungi bikes waiting at a dock right now',
+             grouped(bikes), grouped(bikes), pair='bike_stock', pin=True,
+             label_ko='지금 거치대에 있는 따릉이 수'),
+        fact('bike_racks', 'bike', 'Ttareungi docking points across Seoul',
+             grouped(racks), grouped(racks), pair='bike_stock',
+             label_ko='서울 전역 따릉이 거치대 수'),
+        fact('bike_stations', 'bike', 'Ttareungi stations citywide',
+             grouped(stations), grouped(stations), pair='bike_reach'),
+        fact('bike_empty', 'bike', 'Ttareungi stations with no bike left right now',
+             grouped(empty), grouped(empty), pair='bike_reach', pin=True,
+             label_ko='지금 따릉이가 한 대도 없는 대여소 수'),
+    ]
+
+
+TRAFFIC_LINKS = HERE / 'traffic_links.json'
+
+
+def _traffic_speed(api_key, link_id):
+    """Current speed (km/h) on one TOPIS road link, or None.
+
+    TrafficInfo is keyed by a single 표준링크 id and returns prcs_spd +
+    prcs_trv_time for it; there is no citywide listing, which is why the links
+    are curated by hand (see traffic_facts / traffic_links.json). Verified live
+    28 Jul 2026: xml/TrafficInfo/1/1/1220003800 -> prcs_spd 26. The service
+    rejected json under the shared sample key, so ask for xml and parse with ET
+    (both already used elsewhere in this file)."""
+    url = f'http://openapi.seoul.go.kr:8088/{api_key}/xml/TrafficInfo/1/1/{link_id}'
+    for _ in range(3):
+        r = subprocess.run(['curl', '-s', '--max-time', '30', url],
+                           capture_output=True, text=True)
+        if r.returncode == 0 and r.stdout.strip():
+            try:
+                root = ET.fromstring(r.stdout)
+            except ET.ParseError:
+                continue
+            if (root.findtext('.//CODE') or '') != 'INFO-000':
+                return None
+            spd = root.findtext('.//row/prcs_spd')
+            if spd and spd.strip().isdigit():
+                return int(spd)
+    return None
+
+
+def traffic_facts(api_key):
+    """Live road speeds on a curated set of Seoul's signature arteries.
+
+    TrafficInfo gives speed per 표준링크 id only, so seoul-index carries its own
+    name -> link_id table (traffic_links.json). Fill that table by harvesting real
+    link ids on the Mini with the live key: the shared sample key returns nothing
+    for the listing services, and a road's link id comes from TOPIS
+    (topis.seoul.go.kr) or the Seoul standard node-link dataset, not from this
+    service. A single speed is not a Harper's set, so the vein stays inert until
+    at least two links resolve. Rows whose name_en begins with '_' are skipped,
+    which is how the seed row (one verified link, road name unknown) sits in the
+    file without ever being posted."""
+    try:
+        links = json.loads(TRAFFIC_LINKS.read_text())
+    except (OSError, ValueError):
+        return []
+    out = []
+    for entry in links:
+        lid = str(entry.get('link_id', '')).strip()
+        name_en = entry.get('name_en') or ''
+        if not lid or not name_en or name_en.startswith('_'):
+            continue   # placeholder / unharvested row
+        spd = _traffic_speed(api_key, lid)
+        if spd is None:
+            continue
+        # Bare road names, like the OECD 'world' lines: the opener must name the
+        # metric ("How fast Seoul is driving right now"), so pin the label to keep
+        # the road name and let the selector supply that framing.
+        out.append(fact(f'traffic_{lid}', 'traffic', name_en,
+                        f'{spd} km/h', f'{spd}km/h', pair='traffic_speed',
+                        pin=True, label_ko=entry.get('name_ko') or name_en))
+    return out if len(out) >= 2 else []
+
+
+BOOKS_AGG = HERE / 'books_agg.json'
+# Set by books_facts() so compose() can footnote the loan month on the card, the
+# same split sales/property make (the publisher stays a clickable credit in the
+# reply; the month is a key to the figures and rides beside them).
+BOOKS_PERIOD = {'en': None, 'ko': None}
+
+
+def _ordinal(n):
+    """1 -> '1st', 2 -> '2nd', 10 -> '10th'. Used for the loan-rank labels."""
+    if 10 <= n % 100 <= 20:
+        suf = 'th'
+    else:
+        suf = {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')
+    return f'{n}{suf}'
+
+
+def books_facts():
+    """Aggregate library-loan figures for Seoul last month, from the cached
+    data4library scan (books_agg.json, refreshed monthly by
+    seoul_index_books_harvest.py). Silent until that file exists — the same
+    safe-by-default pattern as traffic_facts.
+
+    Titles are deliberately NOT posted: they are Korean proper nouns that would
+    strand mixed script on the English card. The vein publishes the loan COUNTS
+    only — the checkouts of the most-borrowed book, of the lowest-ranked in the
+    scanned set, and of that set combined — so every figure is fully owned by
+    Python and reads identically in both languages. The metric ('checkouts last
+    month') rides on the opener, like the world/traffic/tourism lines; the labels
+    are pinned because each carries a rank or a set size that Python owns."""
+    try:
+        agg = json.loads(BOOKS_AGG.read_text())
+        books = [b for b in agg['books'] if isinstance(b.get('loan_count'), int)]
+        period = agg['period']
+    except (OSError, ValueError, KeyError):
+        return []
+    if len(books) < 2:
+        return []
+    BOOKS_PERIOD['en'] = period.get('label_en')
+    BOOKS_PERIOD['ko'] = period.get('label_ko')
+    books.sort(key=lambda b: b['ranking'])
+    top, low = books[0], books[-1]
+    n = len(books)
+    total = sum(b['loan_count'] for b in books)
+    rank_low = low['ranking']
+    return [
+        fact('book_top', 'books', 'The most-borrowed book',
+             grouped(top['loan_count']), grouped(top['loan_count']),
+             pair='book_gap', pin=True, label_ko='가장 많이 대출된 책'),
+        fact('book_low', 'books', f'The {_ordinal(rank_low)} most-borrowed',
+             grouped(low['loan_count']), grouped(low['loan_count']),
+             pair='book_gap', pin=True, label_ko=f'대출 {rank_low}위 도서'),
+        fact('book_sum', 'books', f'The top {n} combined',
+             grouped(total), grouped(total), pin=True,
+             label_ko=f'대출 상위 {n}종 합계'),
+    ]
 
 
 # Industry categories worth surfacing (Korean name -> English gloss).
@@ -1836,6 +2022,9 @@ def build_pool(api_key, state, kosis_key=None, gov_key=None):
     pool += air_facts(api_key)
     pool += transport_facts(api_key, state)
     pool += count_facts(api_key)
+    pool += bike_facts(api_key)
+    pool += traffic_facts(api_key)
+    pool += books_facts()
     pool += sales_facts()
     pool += kosis_facts(kosis_key)
     pool += world_facts()
@@ -1873,6 +2062,9 @@ Rules:
 - "weather" lines are published readings from Seoul's official weather station: yesterday's high/low/rain, the last full month set against the SAME month FIFTY YEARS earlier, and (in summer) a season-to-date swelter tally — days of 33°C or more counted from 1 June through yesterday — likewise against the same span fifty years back (each label already carries its dates and year — do not reword those labels). Build them into their own post, never mixed with any other category, and pick ONE frame: the yesterday set, the then-and-now monthly set, OR the season-to-date set (never blend the three). A season-to-date post is built around the swelter tally ("Days of 33°C or more, 1 Jun–…") — always include that pair; the hottest/wettest/tropical season-to-date pairs are its companions. In any then-and-now or season-to-date post every pair must keep BOTH its sides, every pair must put its two years in the SAME order, and the arrangement carries the half-century — never point it out. Open both fifty-year weather frames with "50 years apart" / "50년의 간격" (the numeral, not "Fifty").
 - "tourism" lines are one month's visitor counts at named paid-admission Seoul attractions (the palaces, Lotte World, Seoul Sky…). Own post; ONE frame per post — total visitors OR foreign visitors, never both; the month rides on the card automatically. The pairs are the point: a dead heat or the widest gap between two named attractions.
 - "airport", "health" and "culture" lines are single-source sets like "property" and "weather": each builds its OWN post, never mixed with another category. An airport post is Gimpo's newest month — pick ONE frame, the twenty-year pair or the domestic/international split (labels carry their months). A health post is patient counts at Seoul care institutions in one year: the labels are bare condition names, so the opener must carry the "a year in Seoul's clinics" framing. These are real illnesses — arrange the numbers, never joke about them, and drop any set that reads as a punchline at patients' expense. A culture post is the city's museums and galleries: the counts and the year's most-visited houses.
+- "bike" lines are the public-bike system (Ttareungi) counted live, citywide, right now: bikes waiting at a dock, docking points, stations, and stations standing empty. These are live "right now" figures like the crowd and air lines — build them into their own post, and the opener MUST carry the "right now" framing so the bare counts read as a live snapshot, not fixed totals. The pair is the point: bikes waiting against docking points, or empty stations against all stations. Never mix a bike line with a spending, national, world or other single-source line.
+- "traffic" lines are live road speeds (km/h) on named Seoul arteries, right now. Like the "world" lines, the labels are BARE ROAD NAMES, so the opener MUST name the metric and the time ("How fast Seoul is driving right now", or a neutral live-speed framing) — this is the other case where the opener names the metric. Build them into their own post; the pair is the gap between the fastest-moving and slowest-moving road. Never mix a traffic line with any other category.
+- "books" lines are library-loan COUNTS from Seoul's public libraries last month, from data4library — the checkouts of the most-borrowed book, of a lower-ranked one, and of the top titles combined. Titles are never named, so the labels are bare ranks ("The most-borrowed book", "The 10th most-borrowed", "The top 10 combined") and the opener MUST name the metric and month ("Library checkouts in Seoul last month", or a neutral loans framing) — the same case as the world, traffic and tourism lines where the opener carries the metric. Own post, one month (the month rides on the card automatically); the pair is the point: the gap between the most-borrowed book's checkouts and the lower-ranked one's. Never mix a books line with any other category.
 - Keep the opener neutral (a time or place framing), EXCEPT on a world post, where it must name the metric as described above. Pick one from OPENERS, or write a short neutral one (max ~5 words) — it must NOT give away or hint at the pairing. Provide it in English and Korean.
 - You may lightly reword an English label for wit, but keep its meaning and DO NOT put any digit in a label.
 - Translate every chosen label to natural Korean (labels only — never restate the number in the label).
@@ -2259,7 +2451,7 @@ def compose(sel, pool):
     # Categories whose figures come from a publisher other than Seoul Open
     # Data; anything outside this set is credited to data.seoul.go.kr.
     non_seoul = {'national', 'world', 'property', 'weather', 'airport',
-                 'health', 'culture', 'tourism'}
+                 'health', 'culture', 'tourism', 'books'}
     uses_seoul = any(c not in non_seoul for c in cats)
     uses_kosis = 'national' in cats
     uses_oecd = 'world' in cats
@@ -2269,6 +2461,7 @@ def compose(sel, pool):
     uses_hira = 'health' in cats
     uses_mcst = 'culture' in cats
     uses_tour = 'tourism' in cats
+    uses_books = 'books' in cats
     srcs = (['data.seoul.go.kr'] if uses_seoul else []) + \
            (['kosis.kr'] if uses_kosis else []) + \
            ([OECD_DOMAIN] if uses_oecd else []) + \
@@ -2277,7 +2470,8 @@ def compose(sel, pool):
            (['airport.co.kr'] if uses_kac else []) + \
            (['opendata.hira.or.kr'] if uses_hira else []) + \
            (['mcst.go.kr'] if uses_mcst else []) + \
-           (['know.tour.go.kr'] if uses_tour else [])
+           (['know.tour.go.kr'] if uses_tour else []) + \
+           (['data4library.kr'] if uses_books else [])
     if not srcs:
         srcs = ['data.seoul.go.kr']
     joined = ', '.join(srcs)
@@ -2341,6 +2535,11 @@ def compose(sel, pool):
         if TOUR_M['en']:
             scope_en.append(f'Paid-admission sites, {TOUR_M["en"]}')
             scope_ko.append(f'유료 관광지 입장객, {TOUR_M["ko"]}')
+    if uses_books and BOOKS_PERIOD['en']:
+        # data4library.kr in srcs is the clickable credit; the loan month and the
+        # public-library scope are keys to the figures, so they ride the card.
+        scope_en.append(f'Public-library loans, {BOOKS_PERIOD["en"]}')
+        scope_ko.append(f'공공도서관 대출, {BOOKS_PERIOD["ko"]}')
     metro_en = metro_ko = ''
     if uses_oecd:
         # Name the metric here rather than trusting the opener. The metro-area
