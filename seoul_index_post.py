@@ -2684,7 +2684,8 @@ LINK_DOMAINS = [('data.seoul.go.kr', 'https://data.seoul.go.kr'),
                 ('airport.co.kr', 'https://www.airport.co.kr'),
                 ('opendata.hira.or.kr', 'https://opendata.hira.or.kr'),
                 ('mcst.go.kr', 'https://www.mcst.go.kr'),
-                ('know.tour.go.kr', 'https://know.tour.go.kr')]
+                ('know.tour.go.kr', 'https://know.tour.go.kr'),
+                ('data4library.kr', 'https://data4library.kr')]
 
 
 def source_reply(tb, body, extra=None):
