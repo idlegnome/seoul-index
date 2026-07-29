@@ -1695,7 +1695,7 @@ TOUR_EN = {
     '덕수궁': 'Deoksugung',
     '종묘': 'Jongmyo',
     '롯데월드': 'Lotte World',
-    '서울스카이': 'Seoul Sky',
+    '서울스카이': 'Lotte World Tower',
     '아쿠아리움': 'the Lotte World Aquarium',
     '서대문형무소역사관': 'Seodaemun Prison History Hall',
     '서대문자연사박물관': 'the Seodaemun Museum of Natural History',
@@ -1703,10 +1703,13 @@ TOUR_EN = {
 
 # Wikipedia articles for the whitelisted attractions, verified 23 Jul 2026:
 # every entry checked against both wikis (ko 종묘 is the Seoul shrine, not the
-# generic rite; en Seoul_Sky redirects to Lotte World Tower, whose observatory
-# it is). 아쿠아리움 is absent on purpose — the Lotte World Aquarium has no
-# standalone article on either wiki. The EN anchor is the plain article name
+# generic rite). 아쿠아리움 is absent on purpose — the Lotte World Aquarium has
+# no standalone article on either wiki. The EN anchor is the plain article name
 # (no leading "the", unlike TOUR_EN); the KO anchor is the feed name itself.
+# Exception: the 서울스카이 feed line is the observation deck, but the account
+# labels and links it as Lotte World Tower — the building it crowns — so its
+# anchors point at the Lotte_World_Tower / 롯데월드타워 articles (per preference,
+# 29 Jul 2026), not the 서울스카이 redirect.
 TOUR_WIKI = {
     '경복궁': ('Gyeongbokgung',
                'https://en.wikipedia.org/wiki/Gyeongbokgung',
@@ -1726,9 +1729,9 @@ TOUR_WIKI = {
     '롯데월드': ('Lotte World',
                  'https://en.wikipedia.org/wiki/Lotte_World',
                  'https://ko.wikipedia.org/wiki/%EB%A1%AF%EB%8D%B0%EC%9B%94%EB%93%9C'),
-    '서울스카이': ('Seoul Sky',
-                   'https://en.wikipedia.org/wiki/Seoul_Sky',
-                   'https://ko.wikipedia.org/wiki/%EC%84%9C%EC%9A%B8%EC%8A%A4%EC%B9%B4%EC%9D%B4'),
+    '서울스카이': ('Lotte World Tower',
+                   'https://en.wikipedia.org/wiki/Lotte_World_Tower',
+                   'https://ko.wikipedia.org/wiki/%EB%A1%AF%EB%8D%B0%EC%9B%94%EB%93%9C%ED%83%80%EC%9B%8C'),
     '서대문형무소역사관': ('Seodaemun Prison History Hall',
                            'https://en.wikipedia.org/wiki/Seodaemun_Prison_History_Hall',
                            'https://ko.wikipedia.org/wiki/%EC%84%9C%EB%8C%80%EB%AC%B8%ED%98%95%EB%AC%B4%EC%86%8C%EC%97%AD%EC%82%AC%EA%B4%80'),
