@@ -1,8 +1,19 @@
 [
   {
-    "_comment": "name_en -> link_id table for TrafficInfo (data.seoul.go.kr real-time road speed). Each link_id is a Seoul TOPIS 표준링크 id; TrafficInfo returns speed for ONE id per call, so this list IS the curated set of arteries the account features. TO POPULATE: on the Mini (live key, not the shared 'sample' key, which returns nothing for listings) find each road's link id from TOPIS (topis.seoul.go.kr) or the Seoul standard node-link dataset, then add a row {name_en, name_ko, link_id}. Good candidates: 강변북로 Gangbyeonbuk-ro, 올림픽대로 Olympic-daero, 내부순환로 Naebu Expressway, 강남대로 Gangnam-daero, 세종대로 Sejong-daero, 종로 Jong-ro. traffic_facts stays silent until at least TWO rows resolve to a live speed. Rows whose name_en begins with '_' are ignored (the seed below is one verified link whose road name is not yet known).",
-    "name_en": "_verified_sample_link_road_unknown",
-    "name_ko": "_검증용 링크(도로명 미상)",
-    "link_id": "1220003800"
-  }
+    "_comment": "name_en -> TOPIS 표준링크 link_id table for the traffic vein (data.seoul.go.kr TrafficInfo, which returns one speed per link_id). Rows below were built by mapping each road name to its 표준링크 ids via the CDSNLAB Seoul TOPIS speed dataset (github.com/cdsnlab/SeoulTrafficData, file 202011.csv, columns 도로명 / 링크아이디), then VERIFYING every id live against TrafficInfo on 29 July 2026 and keeping only ids still returning a numeric prcs_spd. One representative live link per road; the post label is the bare road name, so the exact segment is never shown. Rows whose name_en begins with '_' are ignored. traffic_facts stays silent until at least TWO rows resolve to a live speed. 세종대로 (Sejong-daero) was dropped: none of its 2020 links returned live data. To add a road: find its link ids in the dataset (or TOPIS), verify each is live, then add a {name_en, name_ko, link_id} row.",
+    "name_en": "_doc",
+    "name_ko": "_설명",
+    "link_id": ""
+  },
+  { "name_en": "Gangbyeonbuk-ro",   "name_ko": "강변북로",     "link_id": "1040004100" },
+  { "name_en": "Olympic-daero",     "name_ko": "올림픽대로",   "link_id": "1240004900" },
+  { "name_en": "Naebu Expressway",  "name_ko": "내부순환로",   "link_id": "1130004900" },
+  { "name_en": "Gangnam-daero",     "name_ko": "강남대로",     "link_id": "1210030700" },
+  { "name_en": "Jong-ro",           "name_ko": "종로",         "link_id": "1000001600" },
+  { "name_en": "Dongbu Expressway", "name_ko": "동부간선도로", "link_id": "1030002000" },
+  { "name_en": "Bukbu Expressway",  "name_ko": "북부간선도로", "link_id": "1070001600" },
+  { "name_en": "Cheonho-daero",     "name_ko": "천호대로",     "link_id": "1240000600" },
+  { "name_en": "Yangjae-daero",     "name_ko": "양재대로",     "link_id": "1210002800" },
+  { "name_en": "Teheran-ro",        "name_ko": "테헤란로",     "link_id": "1220028800" },
+  { "name_en": "Bundang-Suseo-ro",  "name_ko": "분당수서로",   "link_id": "1220003800" }
 ]
