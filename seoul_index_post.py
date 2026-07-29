@@ -2484,33 +2484,42 @@ def compose(sel, pool):
     # for them, so they belong on the card beside the numbers - the same split
     # the OECD branch below already makes with its metro-area scope. Only the
     # credit stays in the reply, where the domain can be a real clickable link.
+    # Scope entries qualify the figures ("which dataset, from when") and ride the
+    # card, not the source reply. Each is a (descriptor, period) pair: the four
+    # month/quarter veins carry a real date as their period, everything else has
+    # period None. When exactly ONE datable period covers the whole card, it is
+    # lifted to a dateline under the title (masthead-style) and the footnote keeps
+    # only the descriptor; otherwise the period stays inline as "<desc>, <period>".
+    # Live veins (crowds, bikes) carry no period and date themselves in their own
+    # labels ("right now"), so a card pairing a live line with a dated vein still
+    # shows the dated month up top while the live line reads against it.
     scope_en, scope_ko = [], []
     if ('spending' in cats or 'avgbill' in cats) and SALES_Q['en']:
-        scope_en.append(f'Commercial districts, {SALES_Q["en"]}')
-        scope_ko.append(f'상권, {SALES_Q["ko"]}')
+        scope_en.append(('Commercial districts', SALES_Q['en']))
+        scope_ko.append(('상권', SALES_Q['ko']))
     if uses_kosis:
         years = sorted({by_id[p['id']].get('year') for p in picks
                         if by_id[p['id']]['cat'] == 'national' and by_id[p['id']].get('year')})
         src_en += ' · Statistics Korea'
         src_ko += ' · 통계청'
         if years:
-            scope_en.append(f'{"/".join(years)} figures')
-            scope_ko.append(f'{"/".join(years)}년 자료')
+            scope_en.append((f'{"/".join(years)} figures', None))
+            scope_ko.append((f'{"/".join(years)}년 자료', None))
     if uses_molit:
         # Same split as KOSIS: the ministry is the credit, the filing month is
         # a key to the figures and rides on the card footnote.
         src_en += ' · MOLIT'
         src_ko += ' · 국토교통부'
         if MOLIT_M['en']:
-            scope_en.append(f'Apartment filings, {MOLIT_M["en"]}')
-            scope_ko.append(f'아파트 실거래 신고, {MOLIT_M["ko"]}')
+            scope_en.append(('Apartment filings', MOLIT_M['en']))
+            scope_ko.append(('아파트 실거래 신고', MOLIT_M['ko']))
     if uses_kma:
         # Which station the readings come from is a key to the figures, so
         # it rides on the card; the labels already carry their months.
         src_en += ' · KMA'
         src_ko += ' · 기상청'
-        scope_en.append('Official Seoul station (108)')
-        scope_ko.append('서울 대표 관측소(108) 기준')
+        scope_en.append(('Official Seoul station (108)', None))
+        scope_ko.append(('서울 대표 관측소(108) 기준', None))
     if uses_kac:
         src_en += ' · Korea Airports Corporation'
         src_ko += ' · 한국공항공사'
@@ -2520,35 +2529,36 @@ def compose(sel, pool):
         src_en += ' · HIRA'
         src_ko += ' · 건강보험심사평가원'
         if HEALTH_Y['y']:
-            scope_en.append(f'Insured patients at Seoul institutions, '
-                            f'{HEALTH_Y["y"]}')
-            scope_ko.append(f'서울 소재 요양기관 건강보험 환자 수, '
-                            f'{HEALTH_Y["y"]}년')
+            scope_en.append((f'Insured patients at Seoul institutions, '
+                             f'{HEALTH_Y["y"]}', None))
+            scope_ko.append((f'서울 소재 요양기관 건강보험 환자 수, '
+                             f'{HEALTH_Y["y"]}년', None))
     if uses_mcst:
         src_en += ' · MCST'
         src_ko += ' · 문화체육관광부'
         if CULTURE_Y['y']:
-            scope_en.append(f'Culture-facility survey, {CULTURE_Y["y"]} figures')
-            scope_ko.append(f'문화기반시설총람, {CULTURE_Y["y"]}년 기준')
+            scope_en.append((f'Culture-facility survey, {CULTURE_Y["y"]} figures', None))
+            scope_ko.append((f'문화기반시설총람, {CULTURE_Y["y"]}년 기준', None))
     if uses_tour:
         # Paid-admission scope and the (months-old) data month are keys to
         # the figures; both ride the card.
         src_en += ' · KCTI'
         src_ko += ' · 한국문화관광연구원'
         if TOUR_M['en']:
-            scope_en.append(f'Paid-admission sites, {TOUR_M["en"]}')
-            scope_ko.append(f'유료 관광지 입장객, {TOUR_M["ko"]}')
+            scope_en.append(('Paid-admission sites', TOUR_M['en']))
+            scope_ko.append(('유료 관광지 입장객', TOUR_M['ko']))
     if uses_books and BOOKS_PERIOD['en']:
         # data4library.kr in srcs is the clickable credit; the loan month and the
         # public-library scope are keys to the figures, so they ride the card.
-        scope_en.append(f'Public-library loans, {BOOKS_PERIOD["en"]}')
-        scope_ko.append(f'공공도서관 대출, {BOOKS_PERIOD["ko"]}')
-    metro_en = metro_ko = ''
+        scope_en.append(('Public-library loans', BOOKS_PERIOD['en']))
+        scope_ko.append(('공공도서관 대출', BOOKS_PERIOD['ko']))
     if uses_oecd:
         # Name the metric here rather than trusting the opener. The metro-area
         # scope and the year are NOT put here: they qualify the numbers rather
         # than crediting them, so they belong on the card beside the figures
-        # (see the footnote below), by the same reasoning as the crowd caveat.
+        # (in the footnote), by the same reasoning as the crowd caveat. The year
+        # rides in the descriptor (not the period slot), so it stays a footnote
+        # caveat rather than a masthead dateline — it is a vintage, not a month.
         wf = [by_id[p['id']] for p in picks if by_id[p['id']]['cat'] == 'world']
         keys = sorted({f['id'].split('_')[1] for f in wf})
         years = sorted({f['year'] for f in wf if f.get('year')})
@@ -2560,7 +2570,26 @@ def compose(sel, pool):
         if met_en:
             src_en += f' · {met_en}'
             src_ko += f' · {met_ko}'
-        metro_en, metro_ko = f'Metro areas{yr}', f'광역도시권{yr}'
+        scope_en.append((f'Metro areas{yr}', None))
+        scope_ko.append((f'광역도시권{yr}', None))
+    # The dateline is the single datable period shared across the card. Only the
+    # month/quarter veins carry one; if two dated veins disagree (a rare cross of
+    # different months) no single date is true, so none is lifted and both stay
+    # inline in the footnote.
+    per_pairs = [(pe, pk) for (_, pe), (_, pk) in zip(scope_en, scope_ko) if pe]
+    dateline_en = dateline_ko = ''
+    if per_pairs and len({pe for pe, _ in per_pairs}) == 1:
+        dateline_en, dateline_ko = per_pairs[0]
+
+    def _scope_strs(entries, promoted):
+        # A promoted period is dropped from its entry (it now rides the dateline);
+        # every other entry keeps its "<descriptor>, <period>" form.
+        out = []
+        for desc, per in entries:
+            out.append(f'{desc}, {per}' if per and per != promoted else desc)
+        return out
+    scope_en = _scope_strs(scope_en, dateline_en)
+    scope_ko = _scope_strs(scope_ko, dateline_ko)
     # NOTE: the KT-estimate caveat is deliberately NOT added to the source line.
     # It is a caveat, not a credit, and it already rides on the card footnote
     # below; putting it in both made the reply repeat what the card had just
@@ -2577,13 +2606,6 @@ def compose(sel, pool):
     else:
         note_en = 'Crowds are KT-estimated' if estimated else ''
         note_ko = '인구는 KT 추정' if estimated else ''
-    # The metro-area scope reads as a key to the figures above it, so it goes
-    # under the last line of the card. A world pair cannot also be a crowd pair,
-    # so in practice this is the only footnote on a world card, but they are
-    # joined rather than assigned in case that ever stops being true.
-    if metro_en:
-        scope_en.append(metro_en)
-        scope_ko.append(metro_ko)
     # Caveat first, then scope: a warning about the numbers outranks a key to
     # them. Everything here is deliberately absent from the source reply, which
     # sits one post below and would otherwise repeat the card verbatim.
@@ -2629,17 +2651,25 @@ def compose(sel, pool):
 
     # curly() so the alt text / plaintext fallback matches the card, which the
     # renderer curls via _esc.
-    en_body = curly(op_en + ':\n' + '\n'.join(
-        _pl(l['emoji'], l['label_en'], l['value_en']) for l in lines) + (
-        f'\n{note_en}' if note_en else '') + '\n' + src_en + tail_en)
-    ko_body = curly(op_ko + ':\n' + '\n'.join(
-        _pl(l['emoji'], l['label_ko'], l['value_ko']) for l in lines) + (
-        f'\n{note_ko}' if note_ko else '') + '\n' + src_ko + tail_ko)
+    # The dateline sits under the opener in the plaintext too, so the period
+    # survives in the alt text and in the plaintext fallback post (where there is
+    # no card to carry it).
+    en_body = curly(op_en + ':\n'
+                    + (f'{dateline_en}\n' if dateline_en else '')
+                    + '\n'.join(
+                        _pl(l['emoji'], l['label_en'], l['value_en']) for l in lines)
+                    + (f'\n{note_en}' if note_en else '') + '\n' + src_en + tail_en)
+    ko_body = curly(op_ko + ':\n'
+                    + (f'{dateline_ko}\n' if dateline_ko else '')
+                    + '\n'.join(
+                        _pl(l['emoji'], l['label_ko'], l['value_ko']) for l in lines)
+                    + (f'\n{note_ko}' if note_ko else '') + '\n' + src_ko + tail_ko)
 
     return {
         'opener': {'emoji': opener_emoji, 'en': opener_en, 'ko': opener_ko},
         'lines': lines, 'src_en': src_en, 'src_ko': src_ko,
         'note_en': note_en, 'note_ko': note_ko,
+        'dateline_en': dateline_en, 'dateline_ko': dateline_ko,
         'wiki_en': wiki_en, 'wiki_ko': wiki_ko,
         'en_body': en_body, 'ko_body': ko_body,
         'used': used, 'cats': list(cats), 'primary': primary,
@@ -2695,21 +2725,22 @@ def tag_line():
 # --- card rendering --------------------------------------------------------
 
 def _card_payload(c, lang):
-    """Pull the card's opener, lines and footnote for one language out of
-    compose()'s output."""
+    """Pull the card's opener, lines, footnote and dateline for one language out
+    of compose()'s output."""
     opener = {'emoji': c['opener']['emoji'], 'text': c['opener'][lang]}
     lines = [{'emoji': l['emoji'], 'label': l[f'label_{lang}'], 'value': l[f'value_{lang}']}
              for l in c['lines']]
-    return opener, lines, c[f'note_{lang}']
+    return opener, lines, c[f'note_{lang}'], c.get(f'dateline_{lang}', '')
 
 
 def render_pair(c, out_dir):
     """Render the EN and KO cards into out_dir. Returns ((path,size),(path,size))."""
-    en_op, en_lines, en_note = _card_payload(c, 'en')
-    ko_op, ko_lines, ko_note = _card_payload(c, 'ko')
-    en = render_card(en_op, en_lines, Path(out_dir) / 'card_en.png', footnote=en_note)
+    en_op, en_lines, en_note, en_dl = _card_payload(c, 'en')
+    ko_op, ko_lines, ko_note, ko_dl = _card_payload(c, 'ko')
+    en = render_card(en_op, en_lines, Path(out_dir) / 'card_en.png', footnote=en_note,
+                     dateline=en_dl)
     ko = render_card(ko_op, ko_lines, Path(out_dir) / 'card_ko.png', korean=True,
-                     footnote=ko_note)
+                     footnote=ko_note, dateline=ko_dl)
     return en, ko
 
 

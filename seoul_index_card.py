@@ -91,17 +91,25 @@ def _row_html(line):
     )
 
 
-def _build_html(opener, lines, footnote=''):
+def _build_html(opener, lines, footnote='', dateline=''):
     op_emoji = opener.get('emoji') or ''
     op_lead = f'{_esc(op_emoji)} ' if op_emoji else ''
     rows = ''.join(_row_html(l) for l in lines)
     foot = f'<div class="fn">{_esc(footnote)}</div>' if footnote else ''
+    # A dateline sits just under the title, above the rows: the period the
+    # figures cover, lifted out of the muted footnote so it reads as a masthead
+    # date. When present the title tightens up (.hasdl) so the two group.
+    dl = f'<div class="dl">{_esc(dateline)}</div>' if dateline else ''
+    h_class = 'h hasdl' if dateline else 'h'
     return f"""<!doctype html><html><head><meta charset="utf-8"><style>
 html,body{{margin:0;background:#{SENTINEL}}}
 .card{{width:{CARD_WIDTH}px;box-sizing:border-box;background:{CREAM};color:{INK};
   border-top:4px solid {RED};padding:28px 30px;font-family:{FONT_STACK}}}
 .h{{font-size:17px;font-weight:700;margin-bottom:22px;line-height:1.35}}
+.h.hasdl{{margin-bottom:5px}}
 .h .md{{color:{RED}}}
+.dl{{font-size:14px;font-weight:700;letter-spacing:.02em;color:{RED};
+  margin-bottom:22px;line-height:1.3}}
 .r{{display:flex;align-items:flex-end;margin:13px 0;font-size:16px}}
 .r .lab{{line-height:1;min-width:0;overflow-wrap:anywhere}}
 .r .led{{flex:1 0 34px;border-bottom:2px dotted {RED};margin:0 9px}}
@@ -109,7 +117,8 @@ html,body{{margin:0;background:#{SENTINEL}}}
 .fn{{margin-top:20px;font-size:13px;line-height:1.4;color:{MUTED}}}
 </style></head><body>
 <div class="card">
-<div class="h"><span class="md">##</span> {op_lead}{_esc(opener['text'])}</div>
+<div class="{h_class}"><span class="md">##</span> {op_lead}{_esc(opener['text'])}</div>
+{dl}
 {rows}
 {foot}
 </div></body></html>"""
@@ -157,12 +166,12 @@ def _shoot(doc, out_path):
     return out_path, size
 
 
-def render_card(opener, lines, out_path, korean=False, footnote=''):
+def render_card(opener, lines, out_path, korean=False, footnote='', dateline=''):
     """Render one index card (label→leader→value rows, optional footnote).
-    Returns (path, (w, h))."""
+    An optional dateline sits under the title. Returns (path, (w, h))."""
     if not lines:
         raise CardRenderError('no lines to render')
-    return _shoot(_build_html(opener, lines, footnote), out_path)
+    return _shoot(_build_html(opener, lines, footnote, dateline), out_path)
 
 
 # Source domains get bolded wherever they appear in prose body text.
