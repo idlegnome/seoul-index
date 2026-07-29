@@ -2157,7 +2157,11 @@ def build_pool(api_key, state, kosis_key=None, gov_key=None):
     pool += sales_facts()
     pool += kosis_facts(kosis_key)
     pool += world_facts()
-    pool += worldbank_facts(state)
+    # DISABLED 29 Jul 2026 pending review: the World Bank vein is country-level
+    # (Korea vs other nations), so its cards carry no Seoul figure and read
+    # off-brand for a Seoul account. Code and compose wiring are kept intact;
+    # re-enable by uncommenting this one line.
+    # pool += worldbank_facts(state)
     pool += molit_facts(gov_key)
     pool += kma_facts(gov_key)
     pool += kac_facts(gov_key)
