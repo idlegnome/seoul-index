@@ -34,3 +34,7 @@ card_history.jsonl
 
 # Single-run lock held by seoul_index_post.py for the length of a run
 .post.lock
+
+# Timestamped backups written by the deploy script before it edits files
+*.predeploy.bak
+.gitignore.predeploy.bak
