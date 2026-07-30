@@ -2015,6 +2015,160 @@ def world_facts():
     return out
 
 
+# --- Seoul against whole countries (World Bank for the countries, KOSIS for
+# --- Seoul) ----------------------------------------------------------------
+# Re-anchored to LEAD with Seoul, so every card carries a Seoul figure and reads
+# as a Seoul card, not a bare nations table. The peers are WHOLE COUNTRIES, so
+# Seoul (a 605 km² city) is set against the likes of Korea, Japan, the US — and
+# that is the point of the density line especially: Seoul is denser than entire
+# nations. Seoul's own figure is computed live from KOSIS (its population over
+# the city's area, or its published rate); the countries come from the World
+# Bank. The year is the newest one BOTH sources share, the same latest-common-
+# year rule world_facts uses; the source line names the metric and the footnote
+# flags the Seoul-vs-countries scope. https is required: the http host
+# Cloudflare-redirects to https.
+WB_BASE = 'https://api.worldbank.org/v2'
+WB_DOMAIN = 'data.worldbank.org'
+NATION_COOLDOWN_DAYS = 3   # like WORLD_COOLDOWN_DAYS: keep nation posts occasional
+SEOUL_AREA_KM2 = 605.21    # Seoul Metropolitan Government official city area
+
+# Peer countries recognisable to an English and a Korean reader; any country
+# missing a given indicator-year is simply dropped, so this list is safe to
+# grow. Korea stays in: Seoul -> Korea -> the world is the intended reading.
+WB_COUNTRIES = [
+    ('KOR', 'South Korea'),
+    ('JPN', 'Japan'),
+    ('USA', 'United States'),
+    ('GBR', 'United Kingdom'),
+    ('FRA', 'France'),
+    ('DEU', 'Germany'),
+    ('CHN', 'China'),
+]
+
+# Each measure sets Seoul against the countries on one metric. 'wb' is the World
+# Bank indicator (countries); 'seoul_*' locate Seoul's own annual figure in
+# KOSIS (orgId 101, objL1 11 = 서울); 'seoul' transforms that raw KOSIS value
+# into the metric (density = population / area). Values are language-neutral
+# (numbers + symbols) so value_en == value_ko and the selector translates only
+# the bare place-name labels, exactly as in world_facts.
+WB_MEASURES = [
+    {'key': 'density', 'wb': 'EN.POP.DNST',
+     'seoul_tbl': 'DT_1B040A3', 'seoul_itm': 'T20', 'seoul_obj': '11',
+     'seoul': lambda pop: pop / SEOUL_AREA_KM2,
+     'label': ('People per square kilometre', '1제곱킬로미터당 인구'),
+     'fmt': lambda v: f'{v:,.0f}/km²'},
+    {'key': 'fertility', 'wb': 'SP.DYN.TFRT.IN',
+     'seoul_tbl': 'DT_1B81A21', 'seoul_itm': 'T1', 'seoul_obj': '11',
+     'seoul': lambda x: x,
+     'label': ('Births per woman', '여성 1명당 출생아 수'),
+     'fmt': lambda v: f'{v:.2f}'},
+]
+WB_METRICS = {m['key']: m['label'] for m in WB_MEASURES}
+WB_MIN_PEERS = 2   # this many peer countries (beyond Korea) must share the year
+
+
+def _wb_indicator(indicator, iso_list):
+    """One World Bank call for every country on one indicator; returns
+    {iso3: {year: value}} over non-null values, or {} on failure."""
+    ctry = ';'.join(iso_list)
+    url = (f'{WB_BASE}/country/{ctry}/indicator/{indicator}'
+           f'?format=json&mrv=6&per_page=400')
+    for _ in range(3):
+        r = subprocess.run(['curl', '-s', '--max-time', '25', url],
+                           capture_output=True, text=True)
+        try:
+            d = json.loads(r.stdout)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(d, list) and len(d) > 1 and d[1]:
+            out = {}
+            for row in d[1]:
+                if row.get('value') is None:
+                    continue
+                iso, yr = row.get('countryiso3code'), row.get('date')
+                if iso and yr:
+                    out.setdefault(iso, {})[yr] = row['value']
+            return out
+    return {}
+
+
+def _kosis_series(key_enc, tbl, itm, obj, n=10):
+    """{'YYYY': value} for the latest n annual periods of one KOSIS series, so a
+    Seoul figure can be aligned to whatever year the World Bank last reported.
+    Empty on any failure — the vein just goes silent, never crashes."""
+    url = ('https://kosis.kr/openapi/Param/statisticsParameterData.do?method=getList'
+           f'&apiKey={key_enc}&format=json&jsonVD=Y&orgId=101&tblId={tbl}'
+           f'&itmId={itm}&objL1={obj}&prdSe=Y&newEstPrdCnt={n}')
+    try:
+        d = http_get_json(url)
+    except (RuntimeError, ValueError, OSError):
+        return {}
+    out = {}
+    if isinstance(d, list):
+        for r in d:
+            try:
+                out[r['PRD_DE']] = float(r['DT'])
+            except (KeyError, TypeError, ValueError):
+                continue
+    return out
+
+
+def worldbank_facts(state, kosis_key):
+    """Seoul against whole countries, one metric at a time — the World Bank for
+    the countries, KOSIS for Seoul.
+
+    Re-anchored to LEAD with Seoul: every card carries a Seoul figure computed
+    live (its KOSIS population over the city's 605.21 km², or its KOSIS rate),
+    so the card reads as a Seoul card, not a bare nations table. Each measure
+    yields its own pair (nation_density, nation_fertility) so the selector
+    builds a post around one metric; the labels are bare place names, the opener
+    names the metric, and the year is the newest one BOTH sources share.
+
+    Gated by its own cooldown here (rather than in main() like world) so a
+    cooled nation vein makes NO network calls."""
+    if not kosis_key:
+        return []
+    last = state.get('last_nation_at')
+    if last:
+        try:
+            if datetime.now(timezone.utc) - datetime.fromisoformat(last) \
+                    < timedelta(days=NATION_COOLDOWN_DAYS):
+                return []
+        except ValueError:
+            pass
+    from urllib.parse import quote
+    enc = quote(kosis_key, safe='')
+    names = dict(WB_COUNTRIES)
+    isos = [c for c, _ in WB_COUNTRIES]
+    out = []
+    for m in WB_MEASURES:
+        try:
+            wb_by_year = {}
+            for iso, yv in _wb_indicator(m['wb'], isos).items():
+                for yr, v in yv.items():
+                    wb_by_year.setdefault(yr, {})[iso] = v
+            seoul_raw = _kosis_series(enc, m['seoul_tbl'], m['seoul_itm'], m['seoul_obj'])
+            seoul_by_year = {yr: m['seoul'](v) for yr, v in seoul_raw.items()}
+            # Newest year Seoul and >= WB_MIN_PEERS+1 countries (Korea + peers)
+            # all report: mixed vintages would be a comparison of survey dates.
+            year = next((yr for yr in sorted(set(wb_by_year) & set(seoul_by_year),
+                                             reverse=True)
+                         if len(wb_by_year[yr]) >= WB_MIN_PEERS + 1), None)
+            if not year:
+                continue
+            fmt = m['fmt']
+            sv = fmt(seoul_by_year[year])
+            out.append(fact(f"nation_{m['key']}_SEOUL", 'nation', 'Seoul',
+                            sv, sv, pair=f"nation_{m['key']}", year=year))
+            for iso, v in wb_by_year[year].items():
+                fv = fmt(v)
+                out.append(fact(f"nation_{m['key']}_{iso}", 'nation', names[iso],
+                                fv, fv, pair=f"nation_{m['key']}", year=year))
+        except (RuntimeError, KeyError, ValueError, TypeError):
+            continue
+    return out
+
+
 # --- selection + composition ----------------------------------------------
 
 def build_pool(api_key, state, kosis_key=None, gov_key=None):
@@ -2031,6 +2185,10 @@ def build_pool(api_key, state, kosis_key=None, gov_key=None):
     pool += sales_facts()
     pool += kosis_facts(kosis_key)
     pool += world_facts()
+    # HELD OFF pending card preview (re-anchored 30 Jul 2026 to LEAD with Seoul:
+    # World Bank for the countries, KOSIS for Seoul). Harvester and compose
+    # wiring are live; re-enable by uncommenting this one line once approved.
+    # pool += worldbank_facts(state, kosis_key)
     pool += molit_facts(gov_key)
     pool += kma_facts(gov_key)
     pool += kac_facts(gov_key)
@@ -2061,6 +2219,7 @@ Rules:
 - Do not mix unrelated live "right now" lines with quarterly spending lines in a way that breaks a single frame, unless the contrast itself is the point.
 - "national" lines (Seoul set against the whole country: its share of the population, the fertility-rate gap) are annual figures from a different source. Build them into their own "Seoul and the nation" post — never mix a national line with a live "right now" line or a spending line. The fertility pair is only two lines, so pair it with the population-share line to make a set of three.
 - "world" lines set Seoul's metro area against other cities' metro areas, from the OECD. Their labels are BARE CITY NAMES, so the opener MUST say what is being measured (e.g. "Green space per person", "Within a five-minute walk of transit") — this is the one case where the opener names the metric. Build them into their own post: every world line in a post must come from the SAME pair (all city_green, or all city_transit, never a mix), and a world line NEVER appears alongside a Seoul-only line of any other category. Always include the Seoul line.
+- "nation" lines set SEOUL against whole countries, on one metric, from the World Bank (countries) and KOSIS (Seoul). Seoul leads the card; the peers are whole nations (Korea, Japan, the US…), which is the point — e.g. Seoul is denser than entire countries. Labels are BARE PLACE NAMES (Seoul, then countries), so the opener MUST name the metric (e.g. "People per square kilometre", "Births per woman") — the same rule as the world lines. Build them into their own post: every nation line must come from the SAME pair (all nation_density, or all nation_fertility, never a mix), ALWAYS include the Seoul line, and a nation line NEVER appears alongside a Seoul-only line of any other category or a world (city) line. The pair is the point: Seoul against the country that most sharpens it (the widest gap, or a near dead heat).
 - "property" lines are one month's apartment-market filings from the national land ministry: actual sale prices (the dearest and cheapest single sales), a record jeonse deposit, and counts of filings. Build them into their own post — never alongside a live "right now" line, a spending line, a national line or a world line. The pairs are the point: the price gap (dearest vs cheapest sale) or the jeonse/monthly-rent split. Never put a month or date in a property label — the filing month rides on the card automatically.
 - "weather" lines are published readings from Seoul's official weather station: yesterday's high/low/rain, the last full month set against the SAME month FIFTY YEARS earlier, and (in summer) a season-to-date swelter tally — days of 33°C or more counted from 1 June through yesterday — likewise against the same span fifty years back (each label already carries its dates and year — do not reword those labels). Build them into their own post, never mixed with any other category, and pick ONE frame: the yesterday set, the then-and-now monthly set, OR the season-to-date set (never blend the three). A season-to-date post is built around the swelter tally ("Days of 33°C or more, 1 Jun–…") — always include that pair; the hottest/wettest/tropical season-to-date pairs are its companions. In any then-and-now or season-to-date post every pair must keep BOTH its sides, every pair must put its two years in the SAME order, and the arrangement carries the half-century — never point it out. Open both fifty-year weather frames with "50 years apart" / "50년의 간격" (the numeral, not "Fifty").
 - "tourism" lines are one month's visitor counts at named paid-admission Seoul attractions (the palaces, Lotte World, Seoul Sky…). Own post; ONE frame per post — total visitors OR foreign visitors, never both; the month rides on the card automatically. The pairs are the point: a dead heat or the widest gap between two named attractions.
@@ -2453,11 +2612,12 @@ def compose(sel, pool):
     # everything except the KOSIS 'national' figures, which get their own credit.
     # Categories whose figures come from a publisher other than Seoul Open
     # Data; anything outside this set is credited to data.seoul.go.kr.
-    non_seoul = {'national', 'world', 'property', 'weather', 'airport',
+    non_seoul = {'national', 'world', 'nation', 'property', 'weather', 'airport',
                  'health', 'culture', 'tourism', 'books'}
     uses_seoul = any(c not in non_seoul for c in cats)
     uses_kosis = 'national' in cats
     uses_oecd = 'world' in cats
+    uses_wb = 'nation' in cats
     uses_molit = 'property' in cats
     uses_kma = 'weather' in cats
     uses_kac = 'airport' in cats
@@ -2474,7 +2634,8 @@ def compose(sel, pool):
            (['opendata.hira.or.kr'] if uses_hira else []) + \
            (['mcst.go.kr'] if uses_mcst else []) + \
            (['know.tour.go.kr'] if uses_tour else []) + \
-           (['data4library.kr'] if uses_books else [])
+           (['data4library.kr'] if uses_books else []) + \
+           ([WB_DOMAIN] if uses_wb else [])
     if not srcs:
         srcs = ['data.seoul.go.kr']
     joined = ', '.join(srcs)
@@ -2572,6 +2733,24 @@ def compose(sel, pool):
             src_ko += f' · {met_ko}'
         scope_en.append((f'Metro areas{yr}', None))
         scope_ko.append((f'광역도시권{yr}', None))
+    if uses_wb:
+        # Same split as the OECD branch: name the metric here (a credit); the
+        # scope and year qualify the numbers, so they ride the footnote
+        # ("Seoul against whole countries, <year>") as a year-vintage caveat, not
+        # a masthead period — so its period slot is None, exactly like metro.
+        nf = [by_id[p['id']] for p in picks if by_id[p['id']]['cat'] == 'nation']
+        keys = sorted({f['id'].split('_')[1] for f in nf})
+        years = sorted({f['year'] for f in nf if f.get('year')})
+        wb_met_en = ', '.join(WB_METRICS[k][0] for k in keys if k in WB_METRICS)
+        wb_met_ko = ', '.join(WB_METRICS[k][1] for k in keys if k in WB_METRICS)
+        yr = f', {"/".join(years)}' if years else ''
+        src_en += ' · World Bank'
+        src_ko += ' · 세계은행'
+        if wb_met_en:
+            src_en += f' · {wb_met_en}'
+            src_ko += f' · {wb_met_ko}'
+        scope_en.append((f'Seoul against whole countries{yr}', None))
+        scope_ko.append((f'서울 대 각국(국가 전체){yr}', None))
     # The dateline is the single datable period shared across the card. Only the
     # month/quarter veins carry one; if two dated veins disagree (a rare cross of
     # different months) no single date is true, so none is lifted and both stay
@@ -2685,7 +2864,8 @@ LINK_DOMAINS = [('data.seoul.go.kr', 'https://data.seoul.go.kr'),
                 ('opendata.hira.or.kr', 'https://opendata.hira.or.kr'),
                 ('mcst.go.kr', 'https://www.mcst.go.kr'),
                 ('know.tour.go.kr', 'https://know.tour.go.kr'),
-                ('data4library.kr', 'https://data4library.kr')]
+                ('data4library.kr', 'https://data4library.kr'),
+                (WB_DOMAIN, f'https://{WB_DOMAIN}')]
 
 
 def source_reply(tb, body, extra=None):
@@ -3034,6 +3214,8 @@ def main():
     state['last_success_at'] = datetime.now(timezone.utc).isoformat()
     if primary == 'world':
         state['last_world_at'] = state['last_success_at']
+    if primary == 'nation':
+        state['last_nation_at'] = state['last_success_at']
     write_json_atomic(STATE, state, ensure_ascii=False, indent=2)
 
     log_card(c, sel, primary, posted_uri, handle, fallback=cards is None)
