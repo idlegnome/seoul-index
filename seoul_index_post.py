@@ -2539,17 +2539,76 @@ def _drop_opener_echo(label, opener, korean):
     return ' '.join(rest)
 
 
+# --- cross-pair grouping ---------------------------------------------------
+
+# Veins counted live, "right now". When one shares a card with a single dated
+# vein (a month's visitors, a quarter's spending), the card reads two time-
+# frames at once. Rather than fly the dated month as a lone masthead dateline
+# while the live line dates itself inline, the card splits into two labelled
+# groups — the dated month over its lines, "Right now" over the live ones. The
+# masthead dateline stays the design for single-frame dated cards. See compose().
+LIVE_CATS = {'crowd', 'air', 'bike', 'traffic'}
+# Veins that carry a liftable month/quarter period (they set a dateline). Same
+# four the dateline logic promotes; used early, before scope is built, to spot a
+# groupable live+dated cross pair while ordering the lines.
+DATED_PERIOD_CATS = {'tourism', 'property', 'spending', 'avgbill', 'books'}
+
+
+def _strip_live_frame(label, korean):
+    """Drop the framing a "Right now" subhead makes redundant on a live line, plus
+    the "Estimated"/"추정" the KT-estimated footnote already carries. English is
+    head-initial ("Estimated crowd in the Seongsu cafe strip right now" ->
+    "Crowd in the Seongsu cafe strip"); Korean is head-final, so the same words
+    lead ("지금 성수동 카페거리 추정 인구" -> "성수동 카페거리 인구"). Guards against
+    stranding a preposition or emptying the label; recapitalises English."""
+    t = label.split()
+    if not t:
+        return label
+    if korean:
+        keep = [w for w in t if w not in {'지금', '추정'}]
+        return ' '.join(keep) if keep else label
+    while len(t) > 1 and t[0].lower().strip(',') == 'estimated':
+        t = t[1:]
+    while len(t) > 1 and t[-1].lower().strip(',') in {'right', 'now'} \
+            and t[-1].lower().strip(',') not in _EN_DANGLERS:
+        t = t[:-1]
+    if not t:
+        return label
+    s = ' '.join(t)
+    return s[0].upper() + s[1:] if s[:1].islower() else s
+
+
 def compose(sel, pool):
     by_id = {f['id']: f for f in pool}
     picks = [p for p in sel.get('picks', []) if p.get('id') in by_id]
     if len(picks) < 3:
         raise RuntimeError(f'selector returned too few valid picks: {len(picks)}')
+    spotlight = any(by_id[p['id']]['cat'] == 'spotlight' for p in picks)
+    precats = {by_id[p['id']]['cat'] for p in picks}
+    # A live "right now" vein beside a single dated (month/quarter) vein reads two
+    # time-frames, so it groups: dated lines first under their month, live lines
+    # under "Right now". Whether a date is actually liftable is settled later by
+    # the dateline logic; grouped is confirmed then (needs dateline_en). This
+    # early flag only steers the ordering below.
+    maybe_grouped = (not spotlight and bool(precats & LIVE_CATS)
+                     and bool(precats & DATED_PERIOD_CATS))
+
+    def _val(p):
+        k = _sortkey(by_id[p['id']]['value_en'])
+        return k[1] if k else 0.0
+
     # A spotlight card is one place read along a clock — now, then the usual for
     # this hour, then the hours ahead. Sorting that by size would scramble the
     # sequence into nonsense, so it keeps the harvester's order instead.
-    if any(by_id[p['id']]['cat'] == 'spotlight' for p in picks):
+    if spotlight:
         order = {f['id']: i for i, f in enumerate(pool)}
         picks = sorted(picks, key=lambda p: order.get(p['id'], 0))
+    elif maybe_grouped:
+        # Dated group first, live group second; each largest-first, so the two
+        # near-equal values that make the cross pair land either side of the
+        # divide and sit next to each other across it.
+        picks = sorted(picks, key=lambda p: (
+            by_id[p['id']]['cat'] in LIVE_CATS, -_val(p)))
     else:
         # Order the lines by value, largest first, but only when every line shares a
         # unit (an all-₩ or all-% post). Mixed-unit posts (e.g. a national post's two
@@ -2570,6 +2629,7 @@ def compose(sel, pool):
         lines.append({'emoji': _valid_emoji(p.get('emoji')),
                       'label_en': label_en, 'label_ko': label_ko,
                       'value_en': f['value_en'], 'value_ko': f['value_ko'],
+                      'live': f['cat'] in LIVE_CATS,
                       'pin': bool(f.get('pin') or f.get('label_ko'))})
         used.append(f['id'])
         cats.add(f['cat'])
@@ -2601,12 +2661,22 @@ def compose(sel, pool):
     # rather than trust the prompt. PINNED labels are exempt: a pin declares the
     # wording load-bearing, and trimming a shared "June" off "Hottest day,
     # June 1976" turned a month's record into a claim about the whole year.
-    for lang, ko in (('en', False), ('ko', True)):
-        opener = opener_en if lang == 'en' else opener_ko
-        trimmed = dedupe_labels([l[f'label_{lang}'] for l in lines], opener, korean=ko)
-        for l, t in zip(lines, trimmed):
-            if not l['pin']:
-                l[f'label_{lang}'] = t
+    if maybe_grouped:
+        # The group subheads, not the opener, carry the framing on a grouped card:
+        # "Right now" over the live lines lets each shed its "right now" (and the
+        # "Estimated" the footnote already owns), while the dated lines keep their
+        # wording so the two "Visitors to ..." reads stay parallel under the month.
+        for l in lines:
+            if l['live'] and not l['pin']:
+                for lang, ko in (('en', False), ('ko', True)):
+                    l[f'label_{lang}'] = _strip_live_frame(l[f'label_{lang}'], ko)
+    else:
+        for lang, ko in (('en', False), ('ko', True)):
+            opener = opener_en if lang == 'en' else opener_ko
+            trimmed = dedupe_labels([l[f'label_{lang}'] for l in lines], opener, korean=ko)
+            for l, t in zip(lines, trimmed):
+                if not l['pin']:
+                    l[f'label_{lang}'] = t
 
     # Source line credits every distinct source used. Seoul Open Data covers
     # everything except the KOSIS 'national' figures, which get their own credit.
@@ -2760,6 +2830,13 @@ def compose(sel, pool):
     if per_pairs and len({pe for pe, _ in per_pairs}) == 1:
         dateline_en, dateline_ko = per_pairs[0]
 
+    # Confirm the grouped layout now the period is settled: a live+dated cross
+    # pair groups only if a single month was actually lifted. When it groups, the
+    # month heads its own group instead of flying as a lone masthead dateline, so
+    # the masthead is suppressed (see _card_payload) and the period rides the
+    # dated group's subhead. The footnote already dropped it via _scope_strs.
+    grouped = maybe_grouped and bool(dateline_en)
+
     def _scope_strs(entries, promoted):
         # A promoted period is dropped from its entry (it now rides the dateline);
         # every other entry keeps its "<descriptor>, <period>" form.
@@ -2828,25 +2905,42 @@ def compose(sel, pool):
     tail_en = ''.join(f'{p}{a}' for p, a, _ in wiki_en)
     tail_ko = ''.join(f'{p}{a}' for p, a, _ in wiki_ko)
 
+    # The ordered elements the card draws, per language. A grouped cross pair puts
+    # a date subhead over the dated lines and a "Right now" subhead over the live
+    # ones; otherwise just the rows (an ungrouped dated card flies its month as a
+    # masthead dateline, passed separately). The same list feeds the alt-text twin
+    # below, so card and alt text never drift.
+    def _items(lang):
+        rows = [{'emoji': l['emoji'], 'label': l[f'label_{lang}'],
+                 'value': l[f'value_{lang}']} for l in lines]
+        if not grouped:
+            return rows
+        date_head = dateline_en if lang == 'en' else dateline_ko
+        live_head = 'Right now' if lang == 'en' else '지금'
+        dated = [r for r, l in zip(rows, lines) if not l['live']]
+        live = [r for r, l in zip(rows, lines) if l['live']]
+        return [{'subhead': date_head}, *dated, {'subhead': live_head}, *live]
+    items_en, items_ko = _items('en'), _items('ko')
+
     # curly() so the alt text / plaintext fallback matches the card, which the
-    # renderer curls via _esc.
-    # The dateline sits under the opener in the plaintext too, so the period
-    # survives in the alt text and in the plaintext fallback post (where there is
-    # no card to carry it).
-    en_body = curly(op_en + ':\n'
-                    + (f'{dateline_en}\n' if dateline_en else '')
-                    + '\n'.join(
-                        _pl(l['emoji'], l['label_en'], l['value_en']) for l in lines)
-                    + (f'\n{note_en}' if note_en else '') + '\n' + src_en + tail_en)
-    ko_body = curly(op_ko + ':\n'
-                    + (f'{dateline_ko}\n' if dateline_ko else '')
-                    + '\n'.join(
-                        _pl(l['emoji'], l['label_ko'], l['value_ko']) for l in lines)
-                    + (f'\n{note_ko}' if note_ko else '') + '\n' + src_ko + tail_ko)
+    # renderer curls via _esc. A subhead item is its own bare line. The period
+    # survives in the plaintext either as the masthead line under the opener
+    # (ungrouped) or as the dated group's subhead (grouped) — never both.
+    def _body(op, items, note, src, tail, masthead):
+        parts = [it['subhead'] if 'subhead' in it
+                 else _pl(it['emoji'], it['label'], it['value']) for it in items]
+        return curly(op + ':\n' + (f'{masthead}\n' if masthead else '')
+                     + '\n'.join(parts)
+                     + (f'\n{note}' if note else '') + '\n' + src + tail)
+    en_body = _body(op_en, items_en, note_en, src_en, tail_en,
+                    '' if grouped else dateline_en)
+    ko_body = _body(op_ko, items_ko, note_ko, src_ko, tail_ko,
+                    '' if grouped else dateline_ko)
 
     return {
         'opener': {'emoji': opener_emoji, 'en': opener_en, 'ko': opener_ko},
-        'lines': lines, 'src_en': src_en, 'src_ko': src_ko,
+        'lines': lines, 'items_en': items_en, 'items_ko': items_ko,
+        'grouped': grouped, 'src_en': src_en, 'src_ko': src_ko,
         'note_en': note_en, 'note_ko': note_ko,
         'dateline_en': dateline_en, 'dateline_ko': dateline_ko,
         'wiki_en': wiki_en, 'wiki_ko': wiki_ko,
@@ -2906,12 +3000,13 @@ def tag_line():
 # --- card rendering --------------------------------------------------------
 
 def _card_payload(c, lang):
-    """Pull the card's opener, lines, footnote and dateline for one language out
-    of compose()'s output."""
+    """Pull the card's opener, render items, footnote and dateline for one
+    language out of compose()'s output. The items are rows, optionally split by
+    group subheads on a grouped cross pair (see compose()._items). On a grouped
+    card the date rides a group subhead, so the masthead dateline is suppressed."""
     opener = {'emoji': c['opener']['emoji'], 'text': c['opener'][lang]}
-    lines = [{'emoji': l['emoji'], 'label': l[f'label_{lang}'], 'value': l[f'value_{lang}']}
-             for l in c['lines']]
-    return opener, lines, c[f'note_{lang}'], c.get(f'dateline_{lang}', '')
+    dateline = '' if c.get('grouped') else c.get(f'dateline_{lang}', '')
+    return opener, c[f'items_{lang}'], c[f'note_{lang}'], dateline
 
 
 def render_pair(c, out_dir):

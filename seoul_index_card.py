@@ -19,11 +19,17 @@ The card is rendered on a magenta sentinel background and cropped to content, so
 height. Corners are square on purpose: Bluesky rounds image corners itself.
 
 Public API:
-    render_card(opener, lines, out_path, korean=False, footnote="") -> out_path
+    render_card(opener, lines, out_path, korean=False, footnote="", dateline="")
         opener:   {"emoji": "🧾" or "", "text": "Spent last quarter in Seoul"}
         lines:    [{"emoji": "☕" or "", "label": "Coffee shops",
                     "value": "₩651.4bn"}, ...]
+                  A line may instead be a group subhead — {"subhead": "Right now"}
+                  — rendered red over the rows that follow it. A grouped cross-pair
+                  card uses two (a date over the monthly group, "Right now" over
+                  the live one); plain cards pass none.
         footnote: "Crowds are KT-estimated" or "" for none
+        dateline: masthead period under the title ("December 2025") on a single-
+                  frame dated card; "" when grouped (the date rides a subhead)
 
 Raises CardRenderError on any failure so the poster can fall back to plaintext.
 """
@@ -91,14 +97,26 @@ def _row_html(line):
     )
 
 
+def _item_html(item):
+    """One card element. An item carrying a 'subhead' key renders as a red group
+    subhead — the same red as the masthead dateline, but sitting mid-card over
+    the rows that follow it (a cross-pair card uses a date over its monthly group
+    and "Right now" over its live group). Anything else is a normal row."""
+    if 'subhead' in item:
+        return f'<div class="sub">{_esc(item["subhead"])}</div>'
+    return _row_html(item)
+
+
 def _build_html(opener, lines, footnote='', dateline=''):
     op_emoji = opener.get('emoji') or ''
     op_lead = f'{_esc(op_emoji)} ' if op_emoji else ''
-    rows = ''.join(_row_html(l) for l in lines)
+    rows = ''.join(_item_html(l) for l in lines)
     foot = f'<div class="fn">{_esc(footnote)}</div>' if footnote else ''
     # A dateline sits just under the title, above the rows: the period the
     # figures cover, lifted out of the muted footnote so it reads as a masthead
-    # date. When present the title tightens up (.hasdl) so the two group.
+    # date. When present the title tightens up (.hasdl) so the two group. A
+    # grouped cross pair carries its date as a .sub group subhead instead, and
+    # passes no dateline (see seoul_index_post._card_payload).
     dl = f'<div class="dl">{_esc(dateline)}</div>' if dateline else ''
     h_class = 'h hasdl' if dateline else 'h'
     return f"""<!doctype html><html><head><meta charset="utf-8"><style>
@@ -110,8 +128,11 @@ html,body{{margin:0;background:#{SENTINEL}}}
 .h .md{{color:{RED}}}
 .dl{{font-size:14px;font-weight:700;letter-spacing:.02em;color:{RED};
   margin-bottom:22px;line-height:1.3}}
+.sub{{font-size:14px;font-weight:700;letter-spacing:.02em;color:{RED};
+  line-height:1;margin:24px 0 0}}
+.sub+.r{{margin-top:7px}}
 .r{{display:flex;align-items:flex-end;margin:13px 0;font-size:16px}}
-.r .lab{{line-height:1;min-width:0;overflow-wrap:anywhere}}
+.r .lab{{line-height:1.3;min-width:0;overflow-wrap:anywhere}}
 .r .led{{flex:1 0 34px;border-bottom:2px dotted {RED};margin:0 9px}}
 .r .val{{font-weight:700;line-height:1;white-space:nowrap}}
 .fn{{margin-top:20px;font-size:13px;line-height:1.4;color:{MUTED}}}
